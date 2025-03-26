@@ -3296,6 +3296,18 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     }
                     ///GENIE RC
                     hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->Divide(h_CSmcr,h_CSmcn);
+                    for(Int_t iW = 0; iW < Wbini; iW++)
+                    {
+                        if(iMod==iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)///Calculate GENIE RAD Correction Error
+                        {
+                            Double_t RadContent = h_CSmcr->GetBinContent(iW+1);
+                            Double_t NoRadContent = h_CSmcn->GetBinContent(iW+1);
+                            Double_t RadError = h_CSmcr->GetBinError(iW+1);
+                            Double_t NoRadError = h_CSmcn->GetBinError(iW+1);
+                            Double_t RadError = RadContent/NoRadContent*sqrt(pow(RadError/RadContent,2)+pow(NoRadError/NoRadContent,2));
+                            hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, RadError);
+                        }
+                    }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                 }
                 ///Calculate 3D P_pi RC
                 hr_RCp[iPcanv][iCharge][iQ2]->Sumw2();
@@ -3494,6 +3506,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         if(iCharge == 0){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.9 < Q2 < 2.5;;");}
                         else if(iCharge == 1){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.9 < Q2 < 2.5;;");}
                     }
+                    TLine *lRadCorrAve = new TLine(WbinEdge[iQ2][0],RadFitAve[iCharge],WbinEdge[iQ2][1],RadFitAve[iCharge]);
+                    lRadCorrAve->Draw();
                 }
             }
             /*if(iCharge == 0 && iQ2 == 0)      c1->Print(file_CSradq1pip);
