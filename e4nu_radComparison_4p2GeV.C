@@ -3228,8 +3228,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                             {
                                 h_CSmcr->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]);
                                 h_CSmcn->SetBinContent(iW+1, y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
-                                //h_CSmcr->SetBinError(iW+1, sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]));
-                                //h_CSmcn->SetBinError(iW+1, sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]));
+                                h_CSmcr->SetBinError(iW+1, sqrt(tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]));
+                                h_CSmcn->SetBinError(iW+1, sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]));
                                 ///Load Rad
                                 dCSq[0][iW] += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW];
                                 dCSp[0][iW] += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW];
@@ -3304,7 +3304,10 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     h_CSradP->SetBinContent(iW+1, dCSp[0][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
                     h_CSnoradP->SetBinContent(iW+1, dCSp[1][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
                     if(dCSp[1][iW] > 0. && dCSp[1][iW] < 100. && dCSp[0][iW] > 0. && dCSp[0][iW] < 100.){
+                        Double_t ratio_radp = h_CSradP->GetBinContent(iW+1)/h_CSnoradP->GetBinContent(iW+1);
                         hr_RCp[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, h_CSradP->GetBinContent(iW+1)/h_CSnoradP->GetBinContent(iW+1));
+                        Double_t error_p = ratio_radp * sqrt(pow(sqrt(dCSp[0][iW])/dCSp[0][iW],2)+pow(sqrt(dCSp[1][iW])/dCSp[1][iW],2));
+                        hr_RCp[iPcanv][iCharge][iQ2]->SetBinError(iW+1, error_p);
                         //cout <<"P: "<<iW<<"\t"<<hr_RCp[iPcanv][iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
@@ -3322,7 +3325,10 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     h_CSradT->SetBinContent(iW+1, dCSt[iThPiQ][0][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
                     h_CSnoradT->SetBinContent(iW+1, dCSt[iThPiQ][1][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
                     if(dCSt[iThPiQ][1][iW] > 0. && dCSt[iThPiQ][1][iW] < 100. && dCSt[iThPiQ][0][iW] > 0. && dCSt[iThPiQ][0][iW] < 100.){
+                        Double_t ratio_radt = h_CSradT->GetBinContent(iW+1)/h_CSnoradT->GetBinContent(iW+1);
                         hr_RCt[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, h_CSradT->GetBinContent(iW+1)/h_CSnoradT->GetBinContent(iW+1));
+                        Double_t error_t = ratio_radt * sqrt(pow(sqrt(dCSt[iThPiQ][0][iW])/dCSt[iThPiQ][0][iW],2)+pow(sqrt(dCSt[iThPiQ][1][iW])/dCSt[iThPiQ][1][iW],2));
+                        hr_RCt[iThPiQ][iCharge][iQ2]->SetBinError(iW+1, error_t);
                         //cout <<"T: "<<iW<<"\t"<<hr_RCt[iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
@@ -3335,6 +3341,9 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 h_CSnoradQ->SetBinContent(iW+1, dCSq[1][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
                 if(dCSq[1][iW] > 0. && dCSq[1][iW] < 100. && dCSq[0][iW] > 0. && dCSq[0][iW] < 100.){
                     hr_RCq[iCharge][iQ2]->SetBinContent(iW+1, h_CSradQ->GetBinContent(iW+1)/h_CSnoradQ->GetBinContent(iW+1));
+                    Double_t ratio_radq = h_CSradQ->GetBinContent(iW+1)/h_CSnoradQ->GetBinContent(iW+1);
+                    Double_t error_q = ratio_radq * sqrt(pow(sqrt(dCSq[0][iW])/dCSq[0][iW],2)+pow(sqrt(dCSq[1][iW])/dCSq[1][iW],2));
+                    hr_RCq[iCharge][iQ2]->SetBinError(iW+1, error_q);
                     //cout <<"Q: "<<iW<<"\t"<<hr_RCq[iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                 }
             }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
