@@ -47,9 +47,10 @@ void SetLorentzVector(TLorentzVector &p4,clas12::region_part_ptr rp)
 //MC comparison added by J. L. Barrow (JLB)
 void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "", TString inFile_opg = "", TString inFile_opgm = "",
                                TString inFile_tpd = "", TString inFile_opgn = "", TString inFile_opgmn = "",
-                               TString outputFile = "", Double_t beamE = 0., bool bQorNot = true, Int_t iGENmod = 0)
+                               TString outputFile = "", Double_t beamE = 0., bool bQorNot = true, Int_t iGENmod = 0,
+                               bool AllEvents = true, bool MultiPion = false, bool includeRAD = true, includeAC = true)
 {
-  bool iQorNot = bQorNot; bool bAllEvents = false; bool bMultiPion = true; bool bRAD = false; bool bAC = false;
+  bool iQorNot = bQorNot; bool bAllEvents = AllEvents; bool bMultiPion = MultiPion; bool bRAD = includeRAD; bool bAC = includeAC;
   if(iQorNot==true){cout << "Binning in theta_piQ" << endl;}
   else             {cout << "Binning in theta_pi (i.e., NOT Q)" << endl;}
   bool bending = true;
@@ -3298,14 +3299,14 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->Divide(h_CSmcr,h_CSmcn);
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
-                        if(iMod==iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)///Calculate GENIE RAD Correction Error
+                        if(y_sum[iPcanv][iThPiQ][iCharge][iGENIEr][iQ2][iW]!=0)///Calculate GENIE RAD Correction Error
                         {
                             Double_t RadContent = h_CSmcr->GetBinContent(iW+1);
                             Double_t NoRadContent = h_CSmcn->GetBinContent(iW+1);
                             Double_t RadError = h_CSmcr->GetBinError(iW+1);
                             Double_t NoRadError = h_CSmcn->GetBinError(iW+1);
-                            Double_t RadError = RadContent/NoRadContent*sqrt(pow(RadError/RadContent,2)+pow(NoRadError/NoRadContent,2));
-                            hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, RadError);
+                            Double_t RatioError = RadContent/NoRadContent*sqrt(pow(RadError/RadContent,2)+pow(NoRadError/NoRadContent,2));
+                            hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, RatioError);
                         }
                     }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                 }
