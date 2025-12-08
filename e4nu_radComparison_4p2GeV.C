@@ -22,17 +22,19 @@ Code updated for comparisons by J. L. Barrow, MIT/TAU; further modified by Caleb
 #include "clas12writer.h"
 #include "skimmer/DC_pion_fiducial.h"
 #include "skimmer/DC_pion_fiducial.cpp"
-#include "HipoChain.h"
+//#include "HipoChain.h"
 #include <string>
 #include <TH2.h>
 #include <TStyle.h>
 Double_t DeltaThetaPiQBin(Double_t ThetaMin, Double_t ThetaMax);
 Double_t ExpFunc(Double_t A, Double_t B, Double_t C, Double_t D, Double_t E, Double_t P);
+Double_t SchwingerEqnCalc(Double_t E, Double_t dE, Double_t q2, Double_t m2, Double_t theta);
 void EventBinner(bool QorNot, Int_t ichrg, Double_t P_pi, Double_t theta_piq, Double_t q2_epi, Double_t W_epi, Double_t Wmin, Double_t DeltaW, Int_t Wbini, Int_t &iPmom,
                  Int_t &iThPiQ, Int_t &iQ2, Int_t &iW);
 Int_t eCutter(Double_t VWcut, Double_t Lv, Double_t Lw, Double_t vz_e, Double_t vz_e_min, Double_t vz_e_max, Double_t Vperp_e, Double_t Vperp_ecut);
 Int_t PiCutter(Int_t iCharge, Double_t P_pi, Double_t p5, Double_t p10, Double_t Vperp_pi, Double_t Vdiff_pi,
               Double_t Vperp_pipcut[3], Double_t Vperp_pip_ms[3][2], Double_t Vperp_pimcut[2], Double_t Vperp_pim_ms[2][2], Double_t Nsig = 3);
+Double_t BinVolCalc(bool PiQorPi, Int_t c, Int_t q, Int_t p, Int_t t, Int_t w);
 std::ifstream& GotoLine(std::ifstream& file, unsigned int num);
 using namespace clas12;
 using namespace std;
@@ -49,11 +51,11 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
                                TString inFile_tpd = "", TString inFile_opgn = "", TString inFile_opgmn = "",
                                TString outputFile = "", Double_t beamE = 0., bool bQorNot = true, Int_t iGENmod = 0,
                                bool bAllEvents = true, bool bMultiPion = false, bool bRAD = true, bool bAC = true,
-                               bool bData = true, bool bOPG = true)
+                               bool bData = true, bool bOPG = true, bool bLoad = true)
 {
   if(bQorNot==true){cout << "Binning in theta_piQ" << endl;}
   else             {cout << "Binning in theta_pi (i.e., NOT Q)" << endl;}
-  bool bending = true;
+  bool bending = true; TString ver = "a5p1";
   // Record start time
   auto start = std::chrono::high_resolution_clock::now();
   //Changed by JLB
@@ -62,7 +64,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   //JLB
   TString path = "/work/clas12/cfogler/e4nu/skimmer/", path_MC = "/cache/clas12/rg-b/MC/e4nu/cfogler/", path_cut = "/volatile/clas12/cfogler/";
   chain_data.Add(path_MC+inFile_data); chain_MC.Add(path_MC+inFile_MC); chain_opg.Add(path_MC+inFile_opg); chain_opgm.Add(path_MC+inFile_opgm);
-  chain_opgn.Add(path_MC+inFile_opgn); chain_opgmn.Add(path_cut+inFile_opgmn); chain_MCrad.Add(path_cut+inFile_tpd);
+  chain_opgn.Add(path_cut+inFile_opgn); chain_opgmn.Add(path_cut+inFile_opgmn); chain_MCrad.Add(inFile_tpd);
   //JLB (create clas12reader with just tag 0 events)
   chain_data.SetReaderTags({0}); chain_MC.SetReaderTags({0}); chain_opg.SetReaderTags({0}); chain_opgm.SetReaderTags({0});
   chain_opgn.SetReaderTags({0}); chain_opgmn.SetReaderTags({0}); chain_MCrad.SetReaderTags({0});
@@ -70,7 +72,8 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   auto config_c12_opgn=chain_opgn.GetC12Reader(); auto config_c12_opgmn=chain_opgmn.GetC12Reader(); auto config_c12_MCrad=chain_MCrad.GetC12Reader();
   //now get reference to (unique)ptr for accessing data in loop.  This will point to the correct place when file changes
   auto& c12_data=chain_data.C12ref(); auto& c12_MC=chain_MC.C12ref(); auto& c12_opg=chain_opg.C12ref(); auto& c12_opgm=chain_opgm.C12ref();
-  auto& c12_opgn=chain_opgn.C12ref(); auto& c12_opgmn=chain_opgmn.C12ref(); auto& c12_gen=chain_MC.C12ref(); auto& c12_MCrad=chain_MCrad.C12ref();
+  auto& c12_opgn=chain_opgn.C12ref(); auto& c12_opgmn=chain_opgmn.C12ref(); auto& c12_gen=chain_MC.C12ref(); auto& c12_MCrad=chain_MCrad.C12ref(); auto& c12_genrad=chain_MCrad.C12ref();
+  auto& c12_gen_opgn=chain_opgn.C12ref(); auto& c12_gen_opgmn=chain_opgmn.C12ref();
   //struct with all relevent rcdb values
   //auto& rcdbData= config_c12_data->rcdb()->current(); auto& rcdbMC= config_c12_MC->rcdb()->current();
   Double_t weight_data = 1, weight_MC = 1, weight_opg = 1, weight_opgm = 1, weight_opgn = 1, weight_opgmn = 1;
@@ -334,6 +337,8 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   TH2D *h2_Ppim_thetapim_MC     =  new TH2D("h2_Ppim_thetapim_MC","GENIE: Pi- Momentum vs. Pi- Angle;#theta_pim;Momentum (GeV/c)",400,0.,Wthetahistomax,400,0.,Phistomax);
   TH2D *h2_q2_W_MCrad = new TH2D("h2_q2_W_MCrad","GENIE rad: Q^{2} vs. W;W (GeV/c^{2});Q^{2}",400,0.,Whistomax,400,0.,4.4);//1.2 to 4.4
   TH2D *h2_theta_W_MCrad = new TH2D("h2_theta_W_MCrad","GENIE rad: W vs #theta;W (GeV/c^{2});#theta",400,0.,Whistomax,400,0.,Wthetahistomax);
+  TH2D *h2_q2_E_MCrad = new TH2D("h2_q2_E_MCrad","GENIE rad: Q^{2} vs. E_{#omega};E (GeV);Q_{rad}^{2}",510,0.,5.1,440,0.,4.4);//1.2 to 4.4
+  TH2D *h2_q2_E_MCnom = new TH2D("h2_q2_E_MCnom","GENIE nom: Q^{2} vs. E_{#omega};E (GeV);Q_{nom}^{2}",510,0.,5.1,440,0.,4.4);//1.2 to 4.4
 
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   //2D Histograms of particular topologies without cuts on various kinematic variables (what should the cuts be?)
@@ -382,22 +387,22 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
     Int_t Wbini = 48, Q2bini = 4, models = 6, sectors = 5, Nrec = 2, TPIQi = 4, Pbini = 4;
     Int_t iDATA = 5, iGENIE = 4, iGEN = 3, iGENIEr = 2, iOPGr = 1, iOPGn = 0;
     Int_t i_pi = -1, i_pip = 0, i_pim = 0, canvas = 1, mark = 8, cs_data = 0, cs_MC = 0, cs_opg = 0;
-    Int_t cs_opgm = 0, cs_opgn = 0, cs_opgmn = 0; ///files = 7
-    Double_t theta_piq = 0.0, theta_piqmax =0.0;
+    Int_t cs_opgm = 0, cs_opgn = 0, cs_opgmn = 0, nRC_schwing = 0, nRC_genie = 0, iRCp=0, iRCt=0, iRCq=0, iRCw=0, iRCc=0; ///files = 7
+    Double_t theta_piq = 0.0, theta_piqmax =0.0, RC_schwing = 0., RC_genie = 0., RC_wght = 0.;
     Double_t P_pi = 0.0, Theta_pi = 0.0, Phi_pi = 0.0, Chi2pid_pi = 0., chi2pid_pip = -0.061, chi2pid_pim = -0.019;
     Double_t Vperp_e = 0.0, Vperp_pi = 0.0, Vdiff_pi = 0.0;
     ///cut values
-    Double_t VWcut = 14.0, vz_e_min = -8.0, vz_e_max = 2.0, Vperp_ecut = 3.2, Wcut = 1.08, euler = 2.71828;
+    Double_t VWcut = 14.0, vz_e_min = -8.0, vz_e_max = 2.0, Vperp_ecut = 3.2, Wcut = 1.08, euler = 2.71828, el_mom_cut = 1.4;
     Double_t Vperp_pipcut[3] = {10.5,8.3,5.5}, Vperp_pimcut[2] = {7.4,5.8};
     Double_t Vperp_pip_ms[3][2] = {{0.54,1.8},{0.79,1.6},{0.52,1.3}}, Vperp_pim_ms[2][2] = {{0.040,1.6},{0.073,1.3}}, PiCutSig = 3.0;
     Double_t u_eID = 0.015, u_hID = 0.014, u_Vze = 0.036, u_Vre = 0.012, u_Vrpi = 0.011, u_Vdiff = 0.02, u_TW = 0.01;
     ///CS values
     Double_t CS_Wbin = (Double_t)Wbini, CS_Wmin = 1.075, CS_Wmax = 2.275;// each bin has 0.025 GeV
 	Double_t CS_Q2bin = (Double_t)Q2bini, CS_Q2min = 0.6, CS_Q2max = 1.5, CS_Tpiq = (Double_t)TPIQi, CS_Sec = (Double_t)sectors;
-	Double_t CS_Pbin = (Double_t)Pbini, CS_Pmin = 0.3, CS_Pmax = 3.3;//990000
-	Double_t cm2ub = 1E+30, ub2nb = (6./5.)*1E+3, bin_vol = 1.0; Double_t totalCS = 0.052, gen_evts = 11110000., opg_gen_events[4] = {14.E+6,10.E+6,17.E+6,14.E+6};
+	Double_t CS_Pbin = (Double_t)Pbini, CS_Pmin = 0.3, CS_Pmax = 3.3, SecCorr = 6./CS_Sec;//990000
+	Double_t cm2ub = 1E+30, ub2nb = 1E+3, bin_vol = 1.0; Double_t totalCS = 0.052, gen_evts = 11110000., opg_gen_events[4] = {14.E+6,10.E+6,17.E+6,14.E+6};
 	Double_t totalCS_Dipole = 0.4321, totalCS_Rarita = 0.4621, dipole_evts = 1.812E+8, rarita_evts = 1.1111E+8; //ub 1.E+7,1.E+7,5.E+6,5.E+6 Rar=2.616
-	Double_t totalCS_DipRad = 0.4321, totalCS_RarRad = 0.4621, diprad_evts = 0.972E+8, rarrad_evts = 1.1111E+8; diprad_evts = 0.576E+8;
+	Double_t totalCS_DipRad = 0.4321, totalCS_RarRad = 0.4621, diprad_evts = 0.972E+8, rarrad_evts = 1.1111E+8; //diprad_evts = 0.576E+8;
 	if(bAllEvents == false){dipole_evts = 1.812E+5; diprad_evts = 0.972E+5;}
 	Double_t totalCS_MC[2] = {totalCS_Dipole, totalCS_Rarita}, MC_evts[2] = {dipole_evts,rarita_evts}, MC_rad_evts[2] = {diprad_evts,rarrad_evts};
 	Double_t tgt_den = 0.169, tgt_len = 5.00, N_A = 6.02214076E+23, tgt_mol = 2.014, q_e = 1.602176634E-19, Q_tot = 6078.43*1E-9;//238300
@@ -412,20 +417,25 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 	Double_t dPt[2][5] = {{0.75,1.1,1.5,2.2,2.7},{0.6,0.9,1.5,1.9,2.4}};
 	/// Sector stuff
   	Int_t sec_i = 0;
-  	Double_t y_i[Pbini+1][TPIQi+1][Nrec][sectors][models][Q2bini][Wbini];
-  	Double_t tCS[Pbini+1][TPIQi+1][Nrec][sectors][3][Q2bini][Wbini];
+  	Double_t y_i[Pbini+1][TPIQi+1][Nrec][sectors][Q2bini][Wbini];
+  	Double_t tCS[Pbini+1][TPIQi+1][Nrec][3][Q2bini][Wbini];
   	Double_t y_sum[Pbini+1][TPIQi+1][Nrec][models][Q2bini][Wbini];
-  	Double_t y_ave[Pbini+1][TPIQi+1][Nrec][models][Q2bini][Wbini];
-	Double_t var_stat[Pbini+1][TPIQi+1][Nrec][sectors][models][Q2bini][Wbini];
-  	Double_t var[Pbini+1][TPIQi+1][Nrec][models][Q2bini][Wbini];
+  	Double_t y_ave[Pbini+1][TPIQi+1][Nrec][Q2bini][Wbini];
+	Double_t var_stat[Pbini+1][TPIQi+1][Nrec][sectors][Q2bini][Wbini];
+  	Double_t var[Pbini+1][TPIQi+1][Nrec][Q2bini][Wbini];
+  	Double_t varP[Pbini+1][Nrec][Q2bini][Wbini];
+  	Double_t varT[TPIQi+1][Nrec][Q2bini][Wbini];
+  	Double_t varQ[Nrec][Q2bini][Wbini];
+  	Double_t y_sume[Pbini+1][TPIQi+1][Nrec][Q2bini][Wbini];
     /// Graph Stuff
-    Double_t CS_log = 0;
+    Double_t CS_log = 0, RC_unc_per = 0.1, AC_unc_per = 0.1;
 	TVector3 vec_e, vec_q, vec_pi, vec_b;
   	char c_NAME[30];
   	TH1D *hr_CS[Pbini][TPIQi][Nrec][Q2bini]; TH1D *hr_AC[Pbini][TPIQi][Nrec][Q2bini]; TH1D *hr_CSmc[Pbini][TPIQi][Nrec][Q2bini];
-  	TH1D *hr_ACq[Nrec][Q2bini]; TH1D *hr_ACp[Pbini][Nrec][Q2bini]; TH1D *hr_ACt[TPIQi][Nrec][Q2bini];
-  	TH1D *hr_RCq[Nrec][Q2bini]; TH1D *hr_RCp[Pbini][Nrec][Q2bini]; TH1D *hr_RCt[TPIQi][Nrec][Q2bini];
-  	TH1D *hr_ARC[Pbini][TPIQi][Nrec][Q2bini]; TH1D *hr_ARCq[Nrec][Q2bini]; TH1D *hr_ARCp[Pbini][Nrec][Q2bini]; TH1D *hr_ARCt[TPIQi][Nrec][Q2bini];
+  	TH1D *hr_ACq[Nrec][Q2bini]; TH1D *hr_ACp[Pbini][Nrec][Q2bini]; TH1D *hr_ACt[TPIQi+1][Nrec][Q2bini];
+  	TH1D *hr_RCq[Nrec][Q2bini]; TH1D *hr_RCp[Pbini][Nrec][Q2bini]; TH1D *hr_RCt[TPIQi+1][Nrec][Q2bini];
+  	TH1D *hr_ACu[Pbini][TPIQi][Nrec][Q2bini]; TH1D *hr_ACqu[Nrec][Q2bini]; TH1D *hr_ACpu[Pbini][Nrec][Q2bini]; TH1D *hr_ACtu[TPIQi+1][Nrec][Q2bini];
+  	//TH1D *hr_ARC[Pbini][TPIQi][Nrec][Q2bini]; TH1D *hr_ARCq[Nrec][Q2bini]; TH1D *hr_ARCp[Pbini][Nrec][Q2bini]; TH1D *hr_ARCt[TPIQi][Nrec][Q2bini];
   	Double_t RadEffCor[Pbini][TPIQi][Nrec][Q2bini];
     TH2D *h2_RC_chi2pip = new TH2D("h2_RC_chi2pip",";chi2/NDF;RC",14,0.,3.5,44,0.,1.1);
     TH2D *h2_RC_chi2pim = new TH2D("h2_RC_chi2pim",";chi2/NDF;RC",14,0.,3.5,44,0.,1.1);
@@ -448,49 +458,75 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
                         hr_CS[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                         sprintf(c_NAME,"hr_AC[%d][%d][%d][%d]",iPmom,iThPiQ,pm,iQ2);
                         hr_AC[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                        sprintf(c_NAME,"hr_ACu[%d][%d][%d][%d]",iPmom,iThPiQ,pm,iQ2);
+                        hr_ACu[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                         sprintf(c_NAME,"hr_CSmc[%d][%d][%d][%d]",iPmom,iThPiQ,pm,iQ2);
                         hr_CSmc[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
-                        sprintf(c_NAME,"hr_ARC[%d][%d][%d][%d]",iPmom,iThPiQ,pm,iQ2);
-                        hr_ARC[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                        //sprintf(c_NAME,"hr_ARC[%d][%d][%d][%d]",iPmom,iThPiQ,pm,iQ2);
+                        //hr_ARC[iPmom][iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                         if(iPmom==0 && iThPiQ<TPIQi)
                         {
                             sprintf(c_NAME,"hr_ACt[%d][%d][%d]",iThPiQ,pm,iQ2);
                             hr_ACt[iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                            sprintf(c_NAME,"hr_ACtu[%d][%d][%d]",iThPiQ,pm,iQ2);
+                            hr_ACtu[iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                             sprintf(c_NAME,"hr_RCt[%d][%d][%d]",iThPiQ,pm,iQ2);
                             hr_RCt[iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
-                            sprintf(c_NAME,"hr_ARCt[%d][%d][%d]",iThPiQ,pm,iQ2);
-                            hr_ARCt[iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                            //sprintf(c_NAME,"hr_ARCt[%d][%d][%d]",iThPiQ,pm,iQ2);
+                            //hr_ARCt[iThPiQ][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                             if(iThPiQ==0)
                             {
                                 sprintf(c_NAME,"hr_ACq[%d][%d]",pm,iQ2);
                                 hr_ACq[pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                                sprintf(c_NAME,"hr_ACqu[%d][%d]",pm,iQ2);
+                                hr_ACqu[pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                                 sprintf(c_NAME,"hr_RCq[%d][%d]",pm,iQ2);
                                 hr_RCq[pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
-                                sprintf(c_NAME,"hr_ARCq[%d][%d]",pm,iQ2);
-                                hr_ARCq[pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                                //sprintf(c_NAME,"hr_ARCq[%d][%d]",pm,iQ2);
+                                //hr_ARCq[pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                                sprintf(c_NAME,"hr_ACt[%d][%d][%d]",TPIQi,pm,iQ2);
+                                hr_ACt[TPIQi][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                                sprintf(c_NAME,"hr_ACtu[%d][%d][%d]",TPIQi,pm,iQ2);
+                                hr_ACtu[TPIQi][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                                sprintf(c_NAME,"hr_RCt[%d][%d][%d]",TPIQi,pm,iQ2);
+                                hr_RCt[TPIQi][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                             }
                         }
                         if(iThPiQ==0 && iPmom<Pbini)
                         {
                             sprintf(c_NAME,"hr_ACp[%d][%d][%d]",iPmom,pm,iQ2);
                             hr_ACp[iPmom][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                            sprintf(c_NAME,"hr_ACpu[%d][%d][%d]",iPmom,pm,iQ2);
+                            hr_ACpu[iPmom][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                             sprintf(c_NAME,"hr_RCp[%d][%d][%d]",iPmom,pm,iQ2);
                             hr_RCp[iPmom][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
-                            sprintf(c_NAME,"hr_ARCp[%d][%d][%d]",iPmom,pm,iQ2);
-                            hr_ARCp[iPmom][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                            //sprintf(c_NAME,"hr_ARCp[%d][%d][%d]",iPmom,pm,iQ2);
+                            //hr_ARCp[iPmom][pm][iQ2] = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                         }
                     }
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
-                        for(Int_t s = 0; s < sectors; s++)
-                        {
-                            y_i[iPmom][iThPiQ][pm][s][f][iQ2][iW] = 0.;
-                            tCS[iPmom][iThPiQ][pm][s][f][iQ2][iW] = 0.;
-                            var_stat[iPmom][iThPiQ][pm][s][f][iQ2][iW] = 0.;
-                        }
                         y_sum[iPmom][iThPiQ][pm][f][iQ2][iW] = 0.;
-                        y_ave[iPmom][iThPiQ][pm][f][iQ2][iW] = 0.;
-                        var[iPmom][iThPiQ][pm][f][iQ2][iW] = 0.;
+                        if(f==0)
+                        {
+                            for(Int_t s = 0; s < sectors; s++)
+                            {
+                                y_i[iPmom][iThPiQ][pm][s][iQ2][iW] = 0.;
+                                var_stat[iPmom][iThPiQ][pm][s][iQ2][iW] = 0.;
+                            }
+                            y_sume[iPmom][iThPiQ][pm][iQ2][iW] = 0.;
+                            y_ave[iPmom][iThPiQ][pm][iQ2][iW] = 0.;
+                            var[iPmom][iThPiQ][pm][iQ2][iW] = 0.;
+                            tCS[iPmom][iThPiQ][pm][0][iQ2][iW] = 0.;
+                            tCS[iPmom][iThPiQ][pm][1][iQ2][iW] = 0.;
+                            tCS[iPmom][iThPiQ][pm][2][iQ2][iW] = 0.;
+                            if(iPmom==0)
+                                varT[iThPiQ][pm][iQ2][iW] = 0.;
+                            if(iThPiQ==0)
+                                varP[iPmom][pm][iQ2][iW] = 0.;
+                            if(iPmom==0 && iThPiQ==0)
+                                varQ[pm][iQ2][iW] = 0.;
+                        }
                     }
                 }
               }
@@ -519,14 +555,17 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   Double_t intCS_pimn[14] = {mn01,mn02,mn03,mn04,mn05,mn06,mn07,mn08,mn09,mn10,mn11,mn12,mn13,mn14};
   Int_t piprN[14] = {60903,61288,59497,60353,60509,60703,61092,60480,60689,60961,60430,60820,61050,61360};
   Int_t pimrN[10] = {33245,33045,32928,32874,32993,33288,32949,33112,32918,32991};
-  Int_t pipnN[17] = {64757,65285,64913,65101,64763,64696,65016,64970,64836,64780,64663,64890,64819,64678,65024,65152,64678};
-  Int_t pimnN[14] = {36413,36040,35944,36036,36119,35858,36537,36177,36110,36293,36079,36116,35944,36150};
+  //Int_t pipnN[17] = {64757,65285,64913,65101,64763,64696,65016,64970,64836,64780,64663,64890,64819,64678,65024,65152,64678};
+  //Int_t pimnN[14] = {36413,36040,35944,36036,36119,35858,36537,36177,36110,36293,36079,36116,35944,36150};
+  Int_t ioned = 1E+6; //i_opg_num_evts_dir
+  Int_t pipnN[17] = {ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned};
+  Int_t pimnN[14] = {ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned,ioned};
   i_pitot = 60903+61288+59497+60353+60509+60703+61092+60480+60689+60961+60430+60820+61050+61360;
   i_pitom = 33245+33045+32928+32874+32993+33288+32949+33112+32918+32991;
-  i_pitop = 64757+65285+64913+65101+64763+64696+65016+64970+64836+64780+64663+64890+64819+64678+65024+65152+64678;
-  i_piton = 36413+36040+35944+36036+36119+35858+36537+36177+36110+36293+36079+36116+35944+36150;
+  i_pitop = 17*ioned;//64757+65285+64913+65101+64763+64696+65016+64970+64836+64780+64663+64890+64819+64678+65024+65152+64678;
+  i_piton = 14*ioned;//36413+36040+35944+36036+36119+35858+36537+36177+36110+36293+36079+36116+35944+36150;
   std::cout << "I'm above the data" << std::endl;
- if(bData==true)
+ if(bData==true && bLoad==true)
  {
   //////////////////////////////////////////////////////////////////////////////
   //         DATA
@@ -572,12 +611,14 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
           Double_t y         = -v4_q.P() + sqrt( v4_q.E()*v4_q.E() + 2*v4_q.E()*mass_p); //y (Bjorken-y), the scaling variable; from Jourdan, eq. 20
           Double_t vz_e      = electrons[0]->par()->getVz();
           Double_t W         = sqrt(mass_p*mass_p - q2 + 2*v4_q.E()*mass_p); //Invariant mass, assuming electron off of a standing proton
+          Double_t theta_e   = v4_el.Theta()*TMath::RadToDeg();
           //std::cout << W << std::endl;
           //std::cout << vz_e << std::endl;
           h_el_vz_h_data->Fill(vz_e);
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           //Electron quality cuts
           bool targ_1 = abs( vz_e - (-1.48)) < 1 * 1.25;
@@ -829,6 +870,8 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
             if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            //if(iPmom == -1){iPmom = 4;}
+            //if(iThPiQ == -1){iThPiQ = 4;}
             if(bMultiPion == true && pips.size() + pims.size() == 1) continue;
             //else if(iCharge == 0){cs_data++;}
           if(iCharge==0)     {
@@ -871,8 +914,13 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iDATA][iQ2][iW] += 1.;
+                y_i[iPmom][iThPiQ][iCharge][sec_i][iQ2][iW] += 1.;
+                y_sum[iPmom][iThPiQ][iCharge][iDATA][iQ2][iW] += 1.;
                 counter_data++;
+            }
+            if(iPmom == iRCp || iThPiQ == iRCt || iQ2 == iRCq || iW == iRCw || iCharge == iRCc){
+              RC_schwing += SchwingerEqnCalc(v4_el.E(), 0.015, q2, mass_e, theta_e);
+              nRC_schwing++;
             }
 	      }//if(electrons.size()==1)[line 590ish]
 	      //if(bAllEvents==false && counter_data>100000) break;
@@ -898,6 +946,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   h_theta_pimq_data->SetLineColor(kBlue); hs_theta_piq_data->Add(h_theta_pimq_data);
  }
 
+cout << "Above GENIE\n";
+ if(bLoad==true)
+  {
   //////////////////////////////////////////////////////////////////////////////
   //         Monte Carlo (GENIE) Reconstructed
   //////////////////////////////////////////////////////////////////////////////
@@ -982,12 +1033,14 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
         if(bQorNot == true){/// theta_piq
             EventBinner(bQorNot, iCharge_gen, P_pi, theta_piq, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
         }
-        /*else{
+        else{
             EventBinner(bQorNot, iCharge_gen, P_pi, Theta_pi, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
-        }*/
+        }
+        //if(iPmom_gen == -1){iPmom_gen = 4;}
+        //if(iThPiQ_gen == -1){iThPiQ_gen = 4;}
         if(iPmom_gen != -1 && iThPiQ_gen != -1 && iQ2_gen != -1 && iW_gen != -1){
             //Fill events
-            y_i[iPmom_gen][iThPiQ_gen][iCharge_gen][0][iGEN][iQ2_gen][iW_gen] += 1.;//sector is set to 0
+            y_sum[iPmom_gen][iThPiQ_gen][iCharge_gen][iGEN][iQ2_gen][iW_gen] += 1.;//sector is set to 0
             counter_gen++;
         }
         Theta_pi = 0.0; Phi_pi = 0.0; //cout << iPmom_gen << iThPiQ_gen << iQ2_gen << iW_gen << "\t";
@@ -1020,6 +1073,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           Double_t processid = c12_MC->mcevent()->getWeight();//code = 1,2,3,4 = type = qel,mec,res,dis
           Double_t resid = c12_MC->mcevent()->getPtarget();//targP = target polarization, which is not relevant = resid
@@ -1036,7 +1090,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             ///Electron vertex calculation
             vec_q.SetMagThetaPhi(v4_q.P(),v4_q.Theta(),v4_q.Phi());
             Vperp_e = sqrt(pow(electrons[0]->par()->getVx(),2) + pow(electrons[0]->par()->getVy(),2));
-            P_pi = 0.0; i_pi = 0; P_can = 0.0;// pion momentum, pion # for the event, momentum of pion candidate
+            i_pi = 0; P_can = 0.0;// pion momentum, pion # for the event, momentum of pion candidate
             Double_t Lv = electrons[0]->cal(PCAL)->getLv(), Lw = electrons[0]->cal(PCAL)->getLw();
             Double_t beta = 0.;
 
@@ -1047,6 +1101,32 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             bool el_fid_lay_2 = dcFid.DC_pi_fid(electrons[0]->traj(DC,18)->getX(),electrons[0]->traj(DC,18)->getY(), 1, electrons[0]->trk(DC)->getSector(), 2,bending);
             bool el_fid_lay_3 = dcFid.DC_pi_fid(electrons[0]->traj(DC,36)->getX(),electrons[0]->traj(DC,36)->getY(), 1, electrons[0]->trk(DC)->getSector(), 3,bending);
             if( !(el_fid_lay_1 && el_fid_lay_2 && el_fid_lay_3) ) continue;// cout << "DC, ";
+
+            ///Calculate CS w/e- fiducials for ACpi
+            /*for(Int_t i=0;i<pips.size();i++)
+            {
+              P_can = pips[i]->par()->getP();
+              if(P_pi < P_can && pips[i]->par()->getCharge() == 1){P_pi = P_can; i_pi = i; iCharge = 0;}
+            }
+            for(Int_t i=0;i<pims.size();i++)
+            {
+              P_can = pims[i]->par()->getP();
+              if(P_pi < P_can && pims[i]->par()->getCharge() == -1){P_pi = P_can; i_pi = i; iCharge = 1;}
+            }
+            ///Theta_piq angle calculation
+            vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
+            theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();*/
+            ///CS w/e- fiducials calculations
+            if(bQorNot == true){/// theta_piq
+                EventBinner(bQorNot, iCharge_gen, P_pi, theta_piq, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
+            }
+            else{/// Theta_pi
+                EventBinner(bQorNot, iCharge_gen, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
+            }
+            if(iPmom != -1 && iThPiQ != -1 && iQ2 != -1 && iW != -1){
+                y_sume[iPmom_gen][iThPiQ_gen][iCharge_gen][iQ2][iW] += 1.;
+            }
+            P_pi=0.; P_can=0.; theta_piq=0.; Theta_pi = 0.0; Phi_pi = 0.0; iPmom=-1; iThPiQ=-1; iCharge=-1; iQ2=-1; iW=-1;
 
             ///Highest momentum Pion Calculator
             if(pips.size()>=1)
@@ -1165,7 +1245,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1) continue;// cout << "binned";
+            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1) continue;// cout << "binned";
+            //if(iPmom == -1){iPmom = 4;}
+            //if(iThPiQ == -1){iThPiQ = 4;}
             if(bMultiPion == true && pips.size() + pims.size() == 1) continue;
             //else if(iCharge == 0){cs_MC++; continue;}
 
@@ -1174,14 +1256,14 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iGENIE][iQ2][iW] += 1.;
+                y_sum[iPmom][iThPiQ][iCharge][iGENIE][iQ2][iW] += 1.;
                 counter_MC++;
             }
 	        //cout << y_i[iPmom][iThPiQ][iCharge][sec_i][iGENIE][iQ2][iW] << "\t" << counter_MC<<endl;
 	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
 	      if(bAllEvents==false && counter_MC>MC_evts[iGENmod]) break;
     }///GENIE while loop ************************************************************************************************************************************
-
+  }
   //Fudge some scaling
   Double_t MC_to_Data_Scaling = 1.;
   if(bData==true){MC_to_Data_Scaling = ( (Double_t)counter_data ) / ( (Double_t)counter_MC );}
@@ -1212,12 +1294,13 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
     else if(id > 9){col = id + 3;}
     h_W_resid_MC[id]->SetMarkerColor(col); h_W_resid_MC[id]->Sumw2(); h_W_resid_MC[id]->Scale(MC_to_Data_Scaling); h_W_resid_MC[id]->SetLineColor(col); hs_W_resid_MC->Add(h_W_resid_MC[id]);
   }
-
+ if(bLoad==true)
+  {
   //////////////////////////////////////////////////////////////////////////////
   //         Monte Carlo (GENIE) Radiative
   //////////////////////////////////////////////////////////////////////////////
   while(chain_MCrad.Next())
-    {
+    {//beamE=c12_MCrad->mcevent()->getEbeam();
       v4_beam_MCrad.SetE(beamE);
       v4_beam_MCrad.SetPz(beamE);
 
@@ -1250,11 +1333,14 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
           Double_t y         = -v4_q.P() + sqrt( v4_q.E()*v4_q.E() + 2*v4_q.E()*mass_p); //y (Bjorken-y), the scaling variable; from Jourdan, eq. 20
           Double_t vz_e      = electrons[0]->par()->getVz();
           Double_t W         = sqrt(mass_p*mass_p - q2 + 2*v4_q.E()*mass_p); //Invariant mass, assuming electron off of a standing proton
+          Double_t theta_e   = v4_el.Theta()*TMath::RadToDeg();
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           Double_t MCrad_weight = c12_MCrad->mcevent()->getWeight();//NOT PROCESSID OF OTHER GENIE FILES
+          if(MCrad_weight == 0){continue;}
           auto processid_true = c12_MCrad->mcevent()->getProcessid();//code = 1,2,3,4 = type = qel,mec,res,dis???????
 
           ///***********************************************************************************************************************************************************************************************
@@ -1264,7 +1350,26 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             Vperp_e = sqrt(pow(electrons[0]->par()->getVx(),2) + pow(electrons[0]->par()->getVy(),2));
             P_pi = 0.0; i_pi = 0; Double_t P_can = 0.0;// pion momentum, pion # for the event, momentum of pion candidate
             Double_t Lv = electrons[0]->cal(PCAL)->getLv(), Lw = electrons[0]->cal(PCAL)->getLw();
-            Double_t beta = 0.;
+            Double_t beta = 0.; Double_t deltaE = 0.015;
+            ///Rad vs Nom test-------------------------------------------------------start
+            TLorentzVector v4_genrad_e, v4_beam_MCnom;
+            v4_beam_MCnom.SetE(c12_MCrad->mcevent()->getEbeam());
+            v4_beam_MCnom.SetPz(c12_MCrad->mcevent()->getEbeam());
+            Int_t Ngen=c12_genrad->mcparts()->getRows();
+            //Int_t iPmom_gen = -1, iThPiQ_gen = -1, iCharge_gen = -1, iFile_gen = -1, iQ2_gen = -1, iW_gen = -1;
+            c12_genrad->mcparts()->setEntry(0);// Need for gen?
+            auto pax=c12_genrad->mcparts()->getPx();
+            auto pay=c12_genrad->mcparts()->getPy();
+            auto paz=c12_genrad->mcparts()->getPz();
+            auto pam=c12_genrad->mcparts()->getMass();
+            auto pid=c12_genrad->mcparts()->getPid();
+
+            v4_genrad_e.SetXYZM(pax, pay, paz, pam);
+            //TLorentzVector v4_genrad_q = v4_beam_MCrad - v4_genrad_e; //photon 4-vector
+            TLorentzVector v4_gennom_q = v4_beam_MCnom - v4_genrad_e; //photon 4-vector
+            h2_q2_E_MCrad->Fill(v4_q.E(),q2);
+            h2_q2_E_MCnom->Fill(v4_gennom_q.E(),-v4_gennom_q.M2());
+            ///Rad vs Nom test-------------------------------------------------------end
 
             ///Electron EC fiducial and vertex cuts
             if(eCutter(VWcut, Lv, Lw, vz_e, vz_e_min, vz_e_max, Vperp_e, Vperp_ecut)!=0) continue;
@@ -1382,7 +1487,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || MCrad_weight<0. || MCrad_weight>100.) continue;
+            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1 || MCrad_weight<=0. || MCrad_weight>100.) continue;
+            //if(iPmom == -1){iPmom = 4;}
+            //if(iThPiQ == -1){iThPiQ = 4;}
             //else if(iCharge == 0){cs_MC++; continue;}
 
             //Fill events
@@ -1390,16 +1497,21 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iGENIEr][iQ2][iW] += 1.;
-                tCS[iPmom][iThPiQ][iCharge][sec_i][iGENIEr][iQ2][iW] += MCrad_weight;
+                y_sum[iPmom][iThPiQ][iCharge][iGENIEr][iQ2][iW] += 1.;
+                tCS[iPmom][iThPiQ][iCharge][iGENIEr][iQ2][iW] += MCrad_weight;
                 counter_MCrad++;
+            }
+            if(iPmom == iRCp || iThPiQ == iRCt || iQ2 == iRCq || iW == iRCw || iCharge == iRCc){
+              RC_genie += SchwingerEqnCalc(v4_el.E(), deltaE, q2, mass_e, theta_e);
+              RC_wght  += MCrad_weight;
+              nRC_genie++;
             }
 	        //cout << y_i[iPmom][iThPiQ][iCharge][sec_i][iGENIEr][iQ2][iW] << "\t" << counter_MCrad<<endl;
 	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
 	      if(bAllEvents==false && counter_MCrad>MC_rad_evts[iGENmod]) break;
     }///GENIErad while loop ************************************************************************************************************************************
-
- if(bOPG==true)
+  }
+ if(bOPG==true && bLoad==true)
   {
   //////////////////////////////////////////////////////////////////////////////
   //         Monte Carlo (onepigen)
@@ -1451,6 +1563,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           ///***********************************************************************************************************************************************************************************************
             Int_t iPmom = -1, iThPiQ = -1, iCharge = -1, iMod = -1, iQ2 = -1, iW = -1;
@@ -1558,7 +1671,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1) continue;
+            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            //if(iPmom == -1){iPmom = 4;}
+            //if(iThPiQ == -1){iThPiQ = 4;}
             else if(iCharge == 1){cs_opg++; continue;}
 
             //Fill events
@@ -1566,8 +1681,8 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iOPGr][iQ2][iW] += 1.;
-                tCS[iPmom][iThPiQ][iCharge][sec_i][iOPGr][iQ2][iW] += intCS_pipr[i_piprF];
+                y_sum[iPmom][iThPiQ][iCharge][iOPGr][iQ2][iW] += 1.;
+                tCS[iPmom][iThPiQ][iCharge][iOPGr][iQ2][iW] += intCS_pipr[i_piprF];
                 counter_opg++; //cout << weight_opg << endl;
             }
 	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
@@ -1624,6 +1739,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           ///***********************************************************************************************************************************************************************************************
             Int_t iPmom = -1, iThPiQ = -1, iCharge = -1, iMod = -1, iQ2 = -1, iW = -1;
@@ -1723,7 +1839,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1) continue;
+            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            //if(iPmom == -1){iPmom = 4;}
+            //if(iThPiQ == -1){iThPiQ = 4;}
             else if(iCharge == 0){cs_opgm++; continue;}
 
             //Fill events
@@ -1731,8 +1849,8 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iOPGr][iQ2][iW] += 1.;
-                tCS[iPmom][iThPiQ][iCharge][sec_i][iOPGr][iQ2][iW] += intCS_pimr[i_pimrF];
+                y_sum[iPmom][iThPiQ][iCharge][iOPGr][iQ2][iW] += 1.;
+                tCS[iPmom][iThPiQ][iCharge][iOPGr][iQ2][iW] += intCS_pimr[i_pimrF];
                 counter_opgm++; //cout << weight_opg << endl;
             }
 	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
@@ -1753,7 +1871,6 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 	        v4_beam_opgn.SetE(c12_opgn->mcevent()->getEbeam());
 	        v4_beam_opgn.SetPz(c12_opgn->mcevent()->getEbeam());
 	      }
-
       //intCS
       i_pipn++;
       if(i_pipn > pipnN[i_pipnF])
@@ -1763,7 +1880,94 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
           i_pipn = 1;
           cout << "NEW FILE (opg_pn): "<<pipnN[i_pipnF]<<"\t"<<i_pisup<<endl;
       }
+///
+      TLorentzVector v4_gen_e;
+      Int_t Ngen=c12_gen_opgn->mcparts()->getRows();
+      Int_t iPmom_gen = -1, iThPiQ_gen = -1, iCharge_gen = -1, iFile_gen = -1, iQ2_gen = -1, iW_gen = -1;
+      P_pi = 0.0; Double_t P_can = 0.0;
+      Double_t mass_gen = mass_p;
+      Double_t PAX = 0., PAY = 0., PAZ=0.,PAM=0.;
+      //cout << counter_gen1 << endl;
+      for(Int_t i_gen=0; i_gen<Ngen; i_gen++)
+      {
+          c12_gen_opgn->mcparts()->setEntry(i_gen);// Need for gen?
+          auto pax=c12_gen_opgn->mcparts()->getPx();
+          auto pay=c12_gen_opgn->mcparts()->getPy();
+          auto paz=c12_gen_opgn->mcparts()->getPz();
+          auto pam=c12_gen_opgn->mcparts()->getMass();
+          auto pid=c12_gen_opgn->mcparts()->getPid();
 
+          if(pid == 11 && i_gen==0)
+          {
+              v4_gen_e.SetXYZM(pax, pay, paz, db->GetParticle(11)->Mass());
+              PAX = pax; PAY = pay; PAZ=paz;PAM=pam;
+          }
+
+          ///Highest momentum Pion Calculator
+          if(pid == 211)
+          {
+            P_can = c12_gen_opgn->mcparts()->getP();
+            if(P_pi < P_can)
+            {
+                P_pi = P_can;
+                iCharge_gen = 0;
+                mass_gen = mass_p;
+                Theta_pi = c12_gen_opgn->mcparts()->getTheta();
+                Phi_pi   = c12_gen_opgn->mcparts()->getPhi();
+                //cout <<" "<< v4_gen_pip.P() <<"="<< P_can;
+            }
+          }
+          if(pid == -211)
+          {
+            P_can = c12_gen_opgn->mcparts()->getP();
+            if(P_pi < P_can)
+            {
+                P_pi = P_can;
+                iCharge_gen = 1;
+                mass_gen = mass_n;
+                Theta_pi = c12_gen_opgn->mcparts()->getTheta();
+                Phi_pi   = c12_gen_opgn->mcparts()->getPhi();
+                //cout <<" "<< v4_gen_pim.P() <<"="<< P_can;
+            }
+          }
+      }
+
+      TLorentzVector v4_gen_q = v4_beam_opgn - v4_gen_e; //photon 4-vector
+      TLorentzVector v4_gen_b = v4_beam_opgn + v4_gen_e; //photon 4-vector
+      Double_t b2_gen    = -v4_gen_b.M2();
+      Double_t M_gen     = sqrt(mass_gen*mass_gen - b2_gen + 2*v4_gen_b.E()*mass_gen); //Invariant mass, assuming electron off of a standing proton
+
+      //Calculate some important kinematic variables
+      Double_t q2_gen    = -v4_gen_q.M2();
+      Double_t W_gen     = sqrt(mass_gen*mass_gen - q2_gen + 2*v4_gen_q.E()*mass_gen); //Invariant mass, assuming electron off of a standing proton
+      ///Theta_piq angle calculation
+      vec_q.SetMagThetaPhi(v4_gen_q.P(),v4_gen_q.Theta(),v4_gen_q.Phi());
+      vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
+      theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///MC_gen CS calculations
+        if(bQorNot == true){/// theta_piq
+            EventBinner(bQorNot, iCharge_gen, P_pi, theta_piq, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
+        }
+        else{
+            EventBinner(bQorNot, iCharge_gen, P_pi, Theta_pi, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
+        }
+        //if(iPmom_gen == -1){iPmom_gen = 4;}
+        //if(iThPiQ_gen == -1){iThPiQ_gen = 4;}
+        /*if(iPmom_gen != -1 && iThPiQ_gen != -1){
+        cout <<"p "<<P_pi<<" "<<iPmom_gen<<"\tt "<<theta_piq<<" "<<iThPiQ_gen<<"\tq "<<q2_gen<<" "<<iQ2_gen<<"\tw "<<W_gen<<" "<<iW_gen;
+        cout <<"\tpax "<<PAX<<"\tpay "<<PAY<<"\tpaz "<<PAZ<<"\tpam "<<PAM<<endl;
+        }*/
+        if(iPmom_gen != -1 && iThPiQ_gen != -1 && iQ2_gen != -1 && iW_gen != -1){
+            //Fill events
+            y_sum[iPmom_gen][iThPiQ_gen][iCharge_gen][iOPGn][iQ2_gen][iW_gen] += 1.;
+            tCS[iPmom_gen][iThPiQ_gen][iCharge_gen][iOPGn][iQ2_gen][iW_gen] += intCS_pipn[i_pipnF];
+            counter_opgn++; //cout << weight_opg << endl;
+        }
+        Theta_pi = 0.0; Phi_pi = 0.0; //cout << iPmom_gen << iThPiQ_gen << iQ2_gen << iW_gen << "\t";
+///
+/*
       // get particles by type
       auto electrons=c12_opgn->getByID(11);
       auto protons=c12_opgn->getByID(2212);
@@ -1788,6 +1992,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           ///-**********************************************************************************************************************************************************************************************
             Int_t iPmom = -1, iThPiQ = -1, iCharge = -1, iMod = -1, iQ2 = -1, iW = -1;
@@ -1883,9 +2088,11 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1) continue;
+            if(iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            if(iPmom == -1){iPmom = 4;}
+            if(iThPiQ == -1){iThPiQ = 4;}
             else if(iCharge == 1){cs_opgn++; continue;}
-
+*/
             /*if(i_pisup<51935)
             {
                 h_tf->Fill(W);
@@ -1898,7 +2105,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             {
                 h_twf->Fill(W);
             }*/
-            Int_t iLowpg = 0;
+/*            Int_t iLowpg = 0;
             if(iQ2 == 0)
             {
                 if(iThPiQ == 0)
@@ -1942,11 +2149,11 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iOPGn][iQ2][iW] += 1.;
-                tCS[iPmom][iThPiQ][iCharge][sec_i][iOPGn][iQ2][iW] += intCS_pipn[i_pipnF];
+                y_sum[iPmom][iThPiQ][iCharge][iOPGn][iQ2][iW] += 1.;
+                tCS[iPmom][iThPiQ][iCharge][iOPGn][iQ2][iW] += intCS_pipn[i_pipnF];
                 counter_opgn++; //cout << weight_opg << endl;
 	        }
-	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
+	      }*/ //if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
     }///onepigen while loop ************************************************************************************************************************************
   h_tf->SetMarkerColor(kRed); h_tf->SetLineColor(kRed); hs_twf->Add(h_tf);
   h_tw->SetMarkerColor(kBlue); h_tw->SetLineColor(kBlue); hs_twf->Add(h_tw);
@@ -1973,7 +2180,87 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
           i_pimn = 1;
           cout << "NEW FILE (opg_mn): "<<pimnN[i_pimnF]<<"\t"<<i_pisun<<endl;
       }
+///
+      TLorentzVector v4_gen_e;
+      Int_t Ngen=c12_gen_opgmn->mcparts()->getRows();
+      Int_t iPmom_gen = -1, iThPiQ_gen = -1, iCharge_gen = -1, iFile_gen = -1, iQ2_gen = -1, iW_gen = -1;
+      P_pi = 0.0; Double_t P_can = 0.0;
+      Double_t mass_gen = mass_p;
+      //cout << counter_gen1 << endl;
+      for(Int_t i_gen=0; i_gen<Ngen; i_gen++)
+      {
+          c12_gen_opgmn->mcparts()->setEntry(i_gen);// Need for gen?
+          auto pax=c12_gen_opgmn->mcparts()->getPx();
+          auto pay=c12_gen_opgmn->mcparts()->getPy();
+          auto paz=c12_gen_opgmn->mcparts()->getPz();
+          auto pam=c12_gen_opgmn->mcparts()->getMass();
+          auto pid=c12_gen_opgmn->mcparts()->getPid();
 
+          if(pid == 11 && i_gen==0)
+          {
+              v4_gen_e.SetXYZM(pax, pay, paz, db->GetParticle(11)->Mass());
+          }
+
+          ///Highest momentum Pion Calculator
+          if(pid == 211)
+          {
+            P_can = c12_gen_opgmn->mcparts()->getP();
+            if(P_pi < P_can)
+            {
+                P_pi = P_can;
+                iCharge_gen = 0;
+                mass_gen = mass_p;
+                Theta_pi = c12_gen_opgmn->mcparts()->getTheta();
+                Phi_pi   = c12_gen_opgmn->mcparts()->getPhi();
+                //cout <<" "<< v4_gen_pip.P() <<"="<< P_can;
+            }
+          }
+          if(pid == -211)
+          {
+            P_can = c12_gen_opgmn->mcparts()->getP();
+            if(P_pi < P_can)
+            {
+                P_pi = P_can;
+                iCharge_gen = 1;
+                mass_gen = mass_n;
+                Theta_pi = c12_gen_opgmn->mcparts()->getTheta();
+                Phi_pi   = c12_gen_opgmn->mcparts()->getPhi();
+                //cout <<" "<< v4_gen_pim.P() <<"="<< P_can;
+            }
+          }
+      }
+
+      TLorentzVector v4_gen_q = v4_beam_opgmn - v4_gen_e; //photon 4-vector
+
+      //Calculate some important kinematic variables
+      Double_t q2_gen    = -v4_gen_q.M2();
+      Double_t W_gen     = sqrt(mass_gen*mass_gen - q2_gen + 2*v4_gen_q.E()*mass_gen); //Invariant mass, assuming electron off of a standing proton
+      ///Theta_piq angle calculation
+      vec_q.SetMagThetaPhi(v4_gen_q.P(),v4_gen_q.Theta(),v4_gen_q.Phi());
+      vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
+      theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///MC_gen CS calculations
+        if(bQorNot == true){/// theta_piq
+            EventBinner(bQorNot, iCharge_gen, P_pi, theta_piq, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
+        }
+        else{
+            EventBinner(bQorNot, iCharge_gen, P_pi, Theta_pi, q2_gen, W_gen, CS_Wmin, dW, Wbini, iPmom_gen, iThPiQ_gen, iQ2_gen, iW_gen);
+        }
+        //if(iPmom_gen == -1){iPmom_gen = 4;}
+        //if(iThPiQ_gen == -1){iThPiQ_gen = 4;}
+        /*if(iQ2_gen != -1 && iW_gen != -1){
+        cout <<"p "<<P_pi<<" "<<iPmom_gen<<"t "<<theta_piq<<" "<<iThPiQ_gen<<"q "<<q2_gen<<" "<<iQ2_gen<<"p "<<W_gen<<" "<<iW_gen<<endl;}*/
+        if(iPmom_gen != -1 && iThPiQ_gen != -1 && iQ2_gen != -1 && iW_gen != -1){
+            //Fill events
+            y_sum[iPmom_gen][iThPiQ_gen][iCharge_gen][iOPGn][iQ2_gen][iW_gen] += 1.;
+            tCS[iPmom_gen][iThPiQ_gen][iCharge_gen][iOPGn][iQ2_gen][iW_gen] += intCS_pimn[i_pimnF];
+            counter_opgmn++; //cout << weight_opg << endl;
+        }
+        Theta_pi = 0.0; Phi_pi = 0.0; //cout << iPmom_gen << iThPiQ_gen << iQ2_gen << iW_gen << "\t";
+///
+/*
       // get particles by type
       auto electrons=c12_opgmn->getByID(11);
       auto protons=c12_opgmn->getByID(2212);
@@ -1998,6 +2285,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
 
           if(W < Wcut) continue; /// W min cut (removes QE "pion" [perhaps coincident proton] events with high ThetaQ)
           else if(W > CS_Wmax) continue; /// Save time
+          else if(electrons[0]->getP() < el_mom_cut) continue;
 
           ///-**********************************************************************************************************************************************************************************************
             Int_t iPmom = -1, iThPiQ = -1, iCharge = -1, iMod = -1, iQ2 = -1, iW = -1;
@@ -2093,7 +2381,9 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1) continue;
+            if(iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            if(iPmom == -1){iPmom = 4;}
+            if(iThPiQ == -1){iThPiQ = 4;}
             else if(iCharge == 0){cs_opgmn++; continue;}
 
             //Fill events
@@ -2101,11 +2391,11 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             if(sec_i > 3) sec_i--;
             if(sec_i > -1 && sec_i < sectors)
             {
-                y_i[iPmom][iThPiQ][iCharge][sec_i][iOPGn][iQ2][iW] += 1.;
-                tCS[iPmom][iThPiQ][iCharge][sec_i][iOPGn][iQ2][iW] += intCS_pimn[i_pimnF];
+                y_sum[iPmom][iThPiQ][iCharge][iOPGn][iQ2][iW] += 1.;
+                tCS[iPmom][iThPiQ][iCharge][iOPGn][iQ2][iW] += intCS_pimn[i_pimnF];
                 counter_opgmn++; //cout << weight_opg << endl;
             }
-	      }//if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
+	      }*/ //if(electrons.size()==1 && (electrons[0]->par()->getVz() < -0.00001 || electrons[0]->par()->getVz() > 0.00001) )
     }///onepigen while loop ************************************************************************************************************************************
   }
   Double_t OPG_to_Data_Scaling = 1.;
@@ -2128,68 +2418,80 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   h_theta_pi_opg->SetMarkerColor(kBlue); h_theta_pi_opg->Sumw2(); h_theta_pi_opg->Scale(OPG_to_Data_Scaling); h_theta_pi_opg->SetLineColor(kBlue); hs_theta_pi->Add(h_theta_pi_opg);
 
 ///--------------------------------------------------------------------OUTPUT--------------------------------------------------------------------///
+/*ofstream Ny_ifile ("Ny_i3.txt");
+ofstream Ny_sumfile ("Ny_sum3.txt");
+ofstream Ny_sumefile ("Ny_sume3.txt");
+cout << "Load data\n";
+//ifstream in_Ny_ifile("Ny_i.txt");
+//ifstream in_Ny_sumfile("Ny_sum.txt");
+unsigned int iNy_i_bin = 0, iNy_sum_bin = 0;
 for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
 {
+  //cout << "charge\n";
   for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
   {
+    //cout << "q2";
     for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
     {
+      //cout << "P";
       Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
       for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
       {
-        /*dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+        //cout << "T";
+        ///dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
         Double_t dPmom = dP[iPcanv];
         if(bQorNot==false)
         {
           dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
           dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
         }
-        bin_vol = dPmom * dT * dQ2[iQ2] * dW;*/
+        bin_vol = dPmom * dT * dQ2[iQ2] * dW;///
         for(Int_t iSector = 0; iSector < sectors; iSector++)
         {
           for(Int_t iMod = 0; iMod < models; iMod++)
           {
             for(Int_t iW = 0; iW < Wbini; iW++)
             {
-              y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW];
-            }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-            /*if(iMod==iDATA)//Data
-            {
-                h_CSS->Scale(cm2ub * ub2nb / (L * bin_vol));
-            }
-            else if(iMod==iGENIE)//GENIE reconstructed
-            {
-                h_CSS->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));
-            }
-            else if(iMod==iGEN)//GENIE generated
-            {
-                h_CSS->Scale(totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod] * bin_vol));
-            }
-            else if(iMod==iOPGr && iCharge==0)//onepigen
-            {
-                h_CSS->Scale(ub2nb / (opg_gen_events[0] * bin_vol));
-            }
-            else if(iMod==iOPGr && iCharge==1)//onepigen pi-
-            {
-                h_CSS->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
-            }
-            else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
-            {
-                h_CSS->Scale(ub2nb / (opg_gen_events[2] * bin_vol));
-            }
-            else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
-            {
-                h_CSS->Scale(ub2nb / (opg_gen_events[3] * bin_vol));
-            }*/
+             if(bLoad==true)
+             {
+              y_sum[iPcanv][iThPiQ][iCharge][iDATA][iQ2][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW];
+              //Ny_ifile<<y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]<<endl;
+              if(iSector==sectors-1)
+              {
+                  Ny_sumfile<<y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]<<endl;
+                  if(iMod==0)
+                    Ny_sumefile<<y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW]<<endl;
+              }///
+             }*/
+             /*else
+             {
+                if(in_Ny_ifile.is_open())
+                {
+                    GotoLine(in_Ny_ifile, iNy_i_bin);
+                    in_Ny_ifile >> y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW];
+                    iNy_i_bin++;
+                }
+                if(in_Ny_sumfile.is_open() && iSector==0)
+                {
+                    GotoLine(in_Ny_sumfile, iNy_sum_bin);
+                    in_Ny_sumfile >> y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
+                    iNy_sum_bin++;
+                }///
+             }*/
+/*            }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
           }
         }
       }
     }
   }
 }
+Ny_ifile.close(); Ny_sumfile.close();
+Ny_sumefile.close();*/
+cout << "Make plots\n";
   TFile *outFile = new TFile(outputFile + ".root","RECREATE");
   ofstream txtFile ("BinEntries.txt");
   //ofstream CStxtFile ("allCSvalues.txt");
+  ofstream ErrtxtFile ("allCSErrValues.txt");
 
   TCanvas *c1 = new TCanvas("c1","c1",6000,4000);
   TString fileName = outputFile + ".pdf";
@@ -2259,6 +2561,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   c1->Print(fileName+"(");
   c1->Clear();
 
+if(bLoad==true)
+ {
   //Divide page into 2x3 grid
   c1->Divide(2,3);
   //Top left
@@ -2279,6 +2583,18 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   //Bottom right
   /*c1->cd(6);
   h2_theta_mom_MC->Draw();*/
+  //Start print of page to file
+  c1->Print(fileName);
+  c1->Clear();
+
+  //Divide page into 2x1 grid
+  c1->Divide(2,1);
+  //Left
+  c1->cd(1);
+  h2_q2_E_MCrad->Draw("colz");
+  //Right
+  c1->cd(2);
+  h2_q2_E_MCnom->Draw("colz");
   //Start print of page to file
   c1->Print(fileName);
   c1->Clear();
@@ -2659,42 +2975,47 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   //Print page to file
   c1->Print(fileName);
   c1->Clear();*/
+ }
   if(bAllEvents == false){MC_evts[0] = 1.812E+7; MC_rad_evts[0] = 0.972E+7;}
   c1->Divide(TPIQi,Pbini);
   //-------------------------------------------------Write to file------------------------------------------//
     Int_t line = 1, size = 3, marc = 2, mark_d = 8;
-    Double_t label_size = 0.11;//0.06 0.09
+    Double_t label_size = 0.11, ACyMax = 20.;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Acceptance Corrections
     {
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
         {
             canvas = 1;
-            Double_t dCSq[2][Wbini];
-            Double_t dCSt[TPIQi][2][Wbini];
+            Double_t dCSq[3][Wbini];
+            Double_t dCSt[TPIQi][3][Wbini];
             for(Int_t iW = 0; iW < Wbini; iW++)
             {
-                dCSq[0][iW] = 0.; dCSq[1][iW] = 0.;
+                dCSq[0][iW] = 0.; dCSq[1][iW] = 0.; dCSq[2][iW] = 0.;
                 for(Int_t iT = 0; iT < TPIQi; iT++)
                 {
-                    dCSt[iT][0][iW] = 0.; dCSt[iT][1][iW] = 0.;
+                    dCSt[iT][0][iW] = 0.; dCSt[iT][1][iW] = 0.; dCSt[iT][2][iW] = 0.;
                 }
             }
             sprintf(c_NAME,"h_CSrecQ%d%d",iCharge,iQ2);
             TH1D * h_CSrecQ = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
             sprintf(c_NAME,"h_CSgenQ%d%d",iCharge,iQ2);
             TH1D * h_CSgenQ = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+            sprintf(c_NAME,"h_CSincQ%d%d",iCharge,iQ2);
+            TH1D * h_CSincQ = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
             for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
             {
                 Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
-                Double_t dCSp[2][Wbini];
+                Double_t dCSp[3][Wbini];
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
-                    dCSp[0][iW] = 0.; dCSp[1][iW] = 0.;
+                    dCSp[0][iW] = 0.; dCSp[1][iW] = 0.; dCSp[2][iW] = 0.;
                 }
                 sprintf(c_NAME,"h_CSrecP%d%d%d",iPcanv,iCharge,iQ2);
                 TH1D * h_CSrecP = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 sprintf(c_NAME,"h_CSgenP%d%d%d",iPcanv,iCharge,iQ2);
                 TH1D * h_CSgenP = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                sprintf(c_NAME,"h_CSincP%d%d%d",iPcanv,iCharge,iQ2);
+                TH1D * h_CSincP = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
                 {
                     dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
@@ -2702,7 +3023,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
-                        dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
+                        dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
                     }
                     bin_vol = dPmom * dT * dQ2[iQ2] * dW;
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
@@ -2712,6 +3033,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     TH1D * h_CSrec = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                     sprintf(c_NAME,"h_CSgen%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                     TH1D * h_CSgen = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                    sprintf(c_NAME,"h_CSinc%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
+                    TH1D * h_CSinc = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                     //gPad->SetLogy();
                     for(Int_t iMod = iGEN; iMod < iDATA; iMod++)
                     {
@@ -2726,19 +3049,31 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                             //cout <<iMod<<" "<<iW <<"\t"<< dCSq[iMod-3][iW] <<" += "<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]<<endl;
                             dCSp[iMod-3][iW] += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
                             dCSt[iThPiQ][iMod-3][iW] += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
+                            if(iMod==iGEN)///CS w/e- fiducials
+                            {
+                                h_CSinc->SetBinContent(iW+1, y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW]);
+                                dCSq[2][iW] += y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                dCSp[2][iW] += y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                dCSt[iThPiQ][2][iW] += y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                if(iPcanv==2 && iThPiQ==1 && iQ2==0 && iCharge==0)
+                                {
+                                    cout << iW <<"\t"<< y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW]<<endl;
+                                }
+                            }
                         }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                         if(iMod==iGENIE)//GENIE reconstructed
                         {
-                            h_CSrg->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
+                            h_CSrg->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
                             line = 1; mark = 32; size = 1; marc = 2; h_CSrg->SetLineColor(2);
                             h_CSrec = h_CSrg;
                             //cout << "Rec " << h_CSrg->GetBinContent(25) <<"\t"<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][24] << endl;
                         }
                         else if(iMod==iGEN)//GENIE generated
                         {
-                            h_CSrg->Scale(totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod] * bin_vol));//kRed
+                            h_CSrg->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
+                            h_CSinc->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
                             line = 1; mark = 32; size = 1; marc = 4; h_CSrg->SetLineColor(3);
-                            h_CSgen = h_CSrg; hr_ARC[iPcanv][iThPiQ][iCharge][iQ2] = h_CSrg;
+                            h_CSgen = h_CSrg; //hr_ARC[iPcanv][iThPiQ][iCharge][iQ2] = h_CSrg;
                             //cout << "Gen " << h_CSrg->GetBinContent(25) <<"\t"<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][24] << endl;
                         }
                         h_CSrg->SetLineStyle(line);
@@ -2749,6 +3084,20 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     }
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->Sumw2();
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->Divide(h_CSgen,h_CSrec);
+                    for(Int_t iW = 0; iW < Wbini; iW++)
+                    {
+                      if(hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinError(iW+1)>0.)
+                        hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, AC_unc_per * abs((h_CSinc->GetBinContent(iW+1)/h_CSrec->GetBinContent(iW+1))-1));
+                        hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, AC_unc_per * abs((h_CSinc->GetBinContent(iW+1)/h_CSrec->GetBinContent(iW+1))-1));
+                        if(isnan(hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1))==1)
+                            hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, 0.);
+                        else if(isinf(hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1))==1)
+                            hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, 0.);
+                        else if(hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)>ACyMax)
+                            hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, 0.);
+                        cout << iPcanv<<" "<<iThPiQ<<" "<<iCharge<<" "<<iQ2<<" "<<hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)<<endl;
+                        hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, 0.);
+                    }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                     hs_CS->Draw("nostack,e1p");
                     hs_CS->Write("nostack,e1p");
                     hs_CS->GetYaxis()->SetLabelSize(label_size);//
@@ -2799,36 +3148,58 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     /*if(dCSp[iGENIE-3][iW] > 0. && dCSp[iGEN-3][iW] > 0.){hr_ACp[iPcanv][iCharge][iQ2]->Sumw2();
                         hr_ACp[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, dCSp[iGEN-3][iW] * (5./6.) / dCSp[iGENIE-3][iW]);
                     }*/
-                    h_CSrecP->SetBinContent(iW+1, dCSp[iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    h_CSgenP->SetBinContent(iW+1, dCSp[iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod]));
+                    h_CSrecP->SetBinContent(iW+1, dCSp[iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                    h_CSgenP->SetBinContent(iW+1, dCSp[iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
+                    h_CSincP->SetBinContent(iW+1, dCSp[2][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
                     /*if(h_CSrecP->GetBinContent(iW+1) > 0. && h_CSgenP->GetBinContent(iW+1) > 0.){
                         hr_ACp[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, h_CSgenP->GetBinContent(iW+1)/h_CSrecP->GetBinContent(iW+1));
                     }*/
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                 hr_ACp[iPcanv][iCharge][iQ2]->Divide(h_CSgenP,h_CSrecP);
-                hr_ARCp[iPcanv][iCharge][iQ2] = h_CSgenP;
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                  if(hr_ACp[iPcanv][iCharge][iQ2]->GetBinError(iW+1)>0. && hr_ACp[iPcanv][iCharge][iQ2]->GetBinContent(iW+1)<ACyMax){
+                    hr_ACp[iPcanv][iCharge][iQ2]->SetBinError(iW+1, AC_unc_per * abs((h_CSincP->GetBinContent(iW+1)/h_CSrecP->GetBinContent(iW+1))-1));
+                    hr_ACpu[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, AC_unc_per * abs((h_CSincP->GetBinContent(iW+1)/h_CSrecP->GetBinContent(iW+1))-1));
+                    hr_ACpu[iPcanv][iCharge][iQ2]->SetBinError(iW+1, 0.);
+                  }
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                //hr_ARCp[iPcanv][iCharge][iQ2] = h_CSgenP;
             }
             ///Calculate 3D Theta_piq AC
-            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            Int_t iThPiQmax = TPIQi;
+            if(bQorNot==false && iCharge==1){iThPiQmax = TPIQi+1;}
+            for(Int_t iThPiQ = 0; iThPiQ < iThPiQmax; iThPiQ++)
             {
                 hr_ACt[iThPiQ][iCharge][iQ2]->Sumw2();
                 sprintf(c_NAME,"h_CSrecT%d%d%d",iThPiQ,iCharge,iQ2);
                 TH1D * h_CSrecT = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 sprintf(c_NAME,"h_CSgenT%d%d%d",iThPiQ,iCharge,iQ2);
                 TH1D * h_CSgenT = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                sprintf(c_NAME,"h_CSincT%d%d%d",iThPiQ,iCharge,iQ2);
+                TH1D * h_CSincT = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
                     /*if(dCSt[iThPiQ][iGENIE-3][iW] > 0. && dCSt[iThPiQ][iGEN-3][iW] > 0.){hr_ACt[iThPiQ][iCharge][iQ2]->Sumw2();
                         hr_ACt[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, dCSt[iThPiQ][iGEN-3][iW] * (5./6.) / dCSt[iThPiQ][iGENIE-3][iW]);
                     }*/
-                    h_CSrecT->SetBinContent(iW+1, dCSt[iThPiQ][iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    h_CSgenT->SetBinContent(iW+1, dCSt[iThPiQ][iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod]));
+                    h_CSrecT->SetBinContent(iW+1, dCSt[iThPiQ][iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                    h_CSgenT->SetBinContent(iW+1, dCSt[iThPiQ][iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
+                    h_CSincT->SetBinContent(iW+1, dCSt[iThPiQ][2][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
                     /*if(h_CSrecT->GetBinContent(iW+1) > 0. && h_CSgenT->GetBinContent(iW+1) > 0.){
                         hr_ACt[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, h_CSgenT->GetBinContent(iW+1)/h_CSrecT->GetBinContent(iW+1));
                     }*/
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                 hr_ACt[iThPiQ][iCharge][iQ2]->Divide(h_CSgenT,h_CSrecT);
-                hr_ARCt[iThPiQ][iCharge][iQ2] = h_CSgenT;
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                  if(hr_ACt[iThPiQ][iCharge][iQ2]->GetBinError(iW+1)>0. && hr_ACt[iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)<ACyMax){
+                    hr_ACt[iThPiQ][iCharge][iQ2]->SetBinError(iW+1, AC_unc_per * abs((h_CSincT->GetBinContent(iW+1)/h_CSrecT->GetBinContent(iW+1))-1));
+                    hr_ACtu[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, AC_unc_per * abs((h_CSincT->GetBinContent(iW+1)/h_CSrecT->GetBinContent(iW+1))-1));
+                    hr_ACtu[iThPiQ][iCharge][iQ2]->SetBinError(iW+1, 0.);
+                  }
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                //hr_ARCt[iThPiQ][iCharge][iQ2] = h_CSgenT;
             }
             ///Calculate 2D Q2 AC
             hr_ACq[iCharge][iQ2]->Sumw2();
@@ -2837,18 +3208,28 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 /*if(dCSq[iGENIE-3][iW] > 0. && dCSq[iGEN-3][iW] > 0.){hr_ACq[iCharge][iQ2]->Sumw2();
                     hr_ACq[iCharge][iQ2]->SetBinContent(iW+1, dCSq[iGEN-3][iW] * (5./6.) / dCSq[iGENIE-3][iW]);
                 }*/
-                h_CSrecQ->SetBinContent(iW+1, dCSq[iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                h_CSgenQ->SetBinContent(iW+1, dCSq[iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod]));
+                h_CSrecQ->SetBinContent(iW+1, dCSq[iGENIE-3][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                h_CSgenQ->SetBinContent(iW+1, dCSq[iGEN-3][iW] * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
+                h_CSincQ->SetBinContent(iW+1, dCSq[2][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
                 /*if(h_CSrecQ->GetBinContent(iW+1) > 0. && h_CSgenQ->GetBinContent(iW+1) > 0.){
                     hr_ACq[iCharge][iQ2]->SetBinContent(iW+1, h_CSgenQ->GetBinContent(iW+1)/h_CSrecQ->GetBinContent(iW+1));
                 }*/
             }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
             hr_ACq[iCharge][iQ2]->Divide(h_CSgenQ,h_CSrecQ);
-            hr_ARCq[iCharge][iQ2] = h_CSgenQ;
+            for(Int_t iW = 0; iW < Wbini; iW++)
+            {
+              if(hr_ACq[iCharge][iQ2]->GetBinError(iW+1)>0. && hr_ACq[iCharge][iQ2]->GetBinContent(iW+1)<ACyMax){
+                hr_ACq[iCharge][iQ2]->SetBinError(iW+1, AC_unc_per * abs((h_CSincQ->GetBinContent(iW+1)/h_CSrecQ->GetBinContent(iW+1))-1));
+                hr_ACqu[iCharge][iQ2]->SetBinContent(iW+1, AC_unc_per * abs((h_CSincQ->GetBinContent(iW+1)/h_CSrecQ->GetBinContent(iW+1))-1));
+                hr_ACqu[iCharge][iQ2]->SetBinError(iW+1, 0.);
+              }
+            }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+            //hr_ARCq[iCharge][iQ2] = h_CSgenQ;
             ///Print 4D GENIE gen and rec cross sections
             c1->Print(fileName);
         }
     }
+    size = 3;
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
     {
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
@@ -2863,9 +3244,13 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     gPad->SetLogy(0);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->Write("e1p");
+                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetStats(0);
+                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetLineStyle(line);
+                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerSize(size);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(label_size);
-                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(20.);
+                    hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(ACyMax);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
                     hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(label_size);
@@ -2892,6 +3277,49 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 }
             }
             c1->Print(fileName);
+            canvas = 1;
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {
+                Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
+                for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+                {
+                    c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                    //gPad->SetLogy(0);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->Write("e1p");
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetStats(0);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetLineStyle(line);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerSize(size);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(label_size);
+                    //hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(20.);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(label_size);
+                    if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==0)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi+   0.70 < Q2 < 1.0;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi-   0.70 < Q2 < 1.0;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==1)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi+   1.0 < Q2 < 1.4;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi-   1.0 < Q2 < 1.4;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==2)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi+   1.4 < Q2 < 1.9;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi-   1.4 < Q2 < 1.9;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==3)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi+   1.9 < Q2 < 2.5;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE inc/recon pi-   1.9 < Q2 < 2.5;;");}
+                    }
+                }
+            }
+            c1->Print(fileName);
         }
     }
   c1->Clear();
@@ -2909,9 +3337,13 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 //gPad->SetLogy(0);
                 hr_ACp[iPcanv][iCharge][iQcanv]->Draw("e1p");
                 hr_ACp[iPcanv][iCharge][iQcanv]->Write("e1p");
+                hr_ACp[iPcanv][iCharge][iQ2]->SetStats(0);
+                hr_ACp[iPcanv][iCharge][iQ2]->SetLineStyle(line);
+                hr_ACp[iPcanv][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                hr_ACp[iPcanv][iCharge][iQ2]->SetMarkerSize(size);
                 hr_ACp[iPcanv][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
                 hr_ACp[iPcanv][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
-                hr_ACp[iPcanv][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACp[iPcanv][iCharge][iQcanv]->SetMaximum(ACyMax);
                 hr_ACp[iPcanv][iCharge][iQcanv]->SetMinimum(0.);
                 hr_ACp[iPcanv][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
                 hr_ACp[iPcanv][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
@@ -2921,6 +3353,36 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 {
                     if(iCharge == 0){hr_ACp[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and P_pi;;");}
                     else if(iCharge == 1){hr_ACp[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and P_pi;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+                Int_t iPcanv = iPmom;//Needed to get plot positions correct for P_pi
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                //gPad->SetLogy(0);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->Draw("e1p");
+                hr_ACpu[iPcanv][iCharge][iQcanv]->Write("e1p");
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetStats(0);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetLineStyle(line);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                //hr_ACpu[iPcanv][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMinimum(0.);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iPcanv==2)
+                {
+                    if(iCharge == 0){hr_ACpu[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE inc/recon pi+   Q2 and P_pi;;");}
+                    else if(iCharge == 1){hr_ACpu[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE inc/recon pi-   Q2 and P_pi;;");}
                 }
             }
         }
@@ -2939,9 +3401,13 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 gPad->SetLogy(0);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->Draw("e1p");
                 hr_ACt[iThPiQ][iCharge][iQcanv]->Write("e1p");
+                hr_ACt[iThPiQ][iCharge][iQ2]->SetStats(0);
+                hr_ACt[iThPiQ][iCharge][iQ2]->SetLineStyle(line);
+                hr_ACt[iThPiQ][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                hr_ACt[iThPiQ][iCharge][iQ2]->SetMarkerSize(size);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
-                hr_ACt[iThPiQ][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACt[iThPiQ][iCharge][iQcanv]->SetMaximum(ACyMax);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->SetMinimum(0.);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
                 hr_ACt[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
@@ -2951,6 +3417,36 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 {
                     if(iCharge == 0){hr_ACt[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and Theta_piq;;");}
                     else if(iCharge == 1){hr_ACt[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and Theta_piq;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            {
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                gPad->SetLogy(0);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->Draw("e1p");
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->Write("e1p");
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetStats(0);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetLineStyle(line);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                //hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMinimum(0.);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iThPiQ==2)
+                {
+                    if(iCharge == 0){hr_ACtu[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE inc/recon pi+   Q2 and Theta_piq;;");}
+                    else if(iCharge == 1){hr_ACtu[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE inc/recon pi-   Q2 and Theta_piq;;");}
                 }
             }
         }
@@ -2969,9 +3465,13 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
             gPad->SetLogy(0);
             hr_ACq[iCharge][iQcanv]->Draw("e1p");
             hr_ACq[iCharge][iQcanv]->Write("e1p");
+            hr_ACq[iCharge][iQ2]->SetStats(0);
+            hr_ACq[iCharge][iQ2]->SetLineStyle(line);
+            hr_ACq[iCharge][iQ2]->SetMarkerStyle(mark_d);
+            hr_ACq[iCharge][iQ2]->SetMarkerSize(size);
             hr_ACq[iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
             hr_ACq[iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
-            hr_ACq[iCharge][iQcanv]->SetMaximum(20.);
+            hr_ACq[iCharge][iQcanv]->SetMaximum(ACyMax);
             hr_ACq[iCharge][iQcanv]->SetMinimum(0.);
             hr_ACq[iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
             hr_ACq[iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
@@ -2982,7 +3482,179 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
             //cout <<"2D ACq: "<< hr_ACq[iCharge][iQ2]->GetBinContent(25)<<endl;
         }
         c1->Print(fileName);
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            c1->cd(canvas); canvas++; //Needed to get plot positions correct
+            gPad->SetLogy(0);
+            hr_ACqu[iCharge][iQcanv]->Draw("e1p");
+            hr_ACqu[iCharge][iQcanv]->Write("e1p");
+            hr_ACqu[iCharge][iQcanv]->SetStats(0);
+            hr_ACqu[iCharge][iQcanv]->SetLineStyle(line);
+            hr_ACqu[iCharge][iQcanv]->SetMarkerStyle(mark_d);
+            hr_ACqu[iCharge][iQcanv]->SetMarkerSize(size);
+            hr_ACqu[iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+            hr_ACqu[iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+            //hr_ACqu[iCharge][iQcanv]->SetMaximum(20.);
+            hr_ACqu[iCharge][iQcanv]->SetMinimum(0.);
+            hr_ACqu[iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+            hr_ACqu[iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+            gStyle->SetEndErrorSize(10);
+            gStyle->SetErrorX(0);
+            if(iCharge == 0 && iQcanv==3){hr_ACqu[iCharge][iQcanv]->SetTitle("2D GENIE inc/recon pi+;;");}
+            else if(iCharge == 1 && iQcanv==3){hr_ACqu[iCharge][iQcanv]->SetTitle("2D GENIE inc/recon pi-;;");}
+        }
+        c1->Print(fileName);
     }
+/*    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            canvas = 1;
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {
+                Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
+                for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+                {
+                    c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                    //gPad->SetLogy(0);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->Write("e1p");
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetStats(0);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetLineStyle(line);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerSize(size);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(label_size);
+                    //hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(20.);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
+                    hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(label_size);
+                    if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==0)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi+   0.70 < Q2 < 1.0;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi-   0.70 < Q2 < 1.0;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==1)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi+   1.0 < Q2 < 1.4;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi-   1.0 < Q2 < 1.4;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==2)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi+   1.4 < Q2 < 1.9;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi-   1.4 < Q2 < 1.9;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==3)
+                    {
+                        if(iCharge == 0){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi+   1.9 < Q2 < 2.5;;");}
+                        else if(iCharge == 1){hr_ACu[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE gen/recon pi-   1.9 < Q2 < 2.5;;");}
+                    }
+                }
+            }
+            c1->Print(fileName);
+        }
+    }
+  c1->Clear();
+  c1->Divide(Pbini,Q2bini);
+    ///Check 3D ratios
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+                Int_t iPcanv = iPmom;//Needed to get plot positions correct for P_pi
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                //gPad->SetLogy(0);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->Draw("e1p");
+                hr_ACpu[iPcanv][iCharge][iQcanv]->Write("e1p");
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetStats(0);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetLineStyle(line);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                //hr_ACpu[iPcanv][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->SetMinimum(0.);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_ACpu[iPcanv][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iPcanv==2)
+                {
+                    if(iCharge == 0){hr_ACpu[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and P_pi;;");}
+                    else if(iCharge == 1){hr_ACpu[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and P_pi;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+    }
+  c1->Clear();
+  c1->Divide(TPIQi,Q2bini);
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            {
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                gPad->SetLogy(0);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->Draw("e1p");
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->Write("e1p");
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetStats(0);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetLineStyle(line);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                //hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMaximum(20.);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->SetMinimum(0.);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_ACtu[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iThPiQ==2)
+                {
+                    if(iCharge == 0){hr_ACtu[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and Theta_piq;;");}
+                    else if(iCharge == 1){hr_ACtu[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and Theta_piq;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+    }
+  //Print page to file
+  c1->Clear();
+    c1->Divide(2,2);
+    ///Check 2D ratios
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            c1->cd(canvas); canvas++; //Needed to get plot positions correct
+            gPad->SetLogy(0);
+            hr_ACqu[iCharge][iQcanv]->Draw("e1p");
+            hr_ACqu[iCharge][iQcanv]->Write("e1p");
+            hr_ACqu[iCharge][iQcanv]->SetStats(0);
+            hr_ACqu[iCharge][iQcanv]->SetLineStyle(line);
+            hr_ACqu[iCharge][iQcanv]->SetMarkerStyle(mark_d);
+            hr_ACqu[iCharge][iQcanv]->SetMarkerSize(size);
+            hr_ACqu[iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+            hr_ACqu[iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+            //hr_ACqu[iCharge][iQcanv]->SetMaximum(20.);
+            hr_ACqu[iCharge][iQcanv]->SetMinimum(0.);
+            hr_ACqu[iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+            hr_ACqu[iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+            gStyle->SetEndErrorSize(10);
+            gStyle->SetErrorX(0);
+            if(iCharge == 0 && iQcanv==3){hr_ACqu[iCharge][iQcanv]->SetTitle("2D GENIE gen/recon pi+;;");}
+            else if(iCharge == 1 && iQcanv==3){hr_ACqu[iCharge][iQcanv]->SetTitle("2D GENIE gen/recon pi-;;");}
+        }
+        c1->Print(fileName);
+    }*/
   //Print page to file
   c1->Clear();
 
@@ -3007,15 +3679,60 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   //c1->Divide(6,5);
   c1->Divide(TPIQi,Pbini);
   line = 1, size = 3, marc = 2;
-  label_size = 0.09; Double_t var_sum = 0., var_num = 0.;
+  label_size = 0.11; Double_t var_sum = 0., var_num = 0.; //0.09
   for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// SECTOR CROSS SECTIONS
   {
       for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
       {
           canvas = 1;
+          Double_t dCSSq[sectors][Wbini];
+          Double_t dCSSq_stat[sectors][Wbini];
+          Double_t dCSSq_ave[Wbini];
+          Double_t dCSSt[TPIQi][sectors][Wbini];
+          Double_t dCSSt_stat[TPIQi][sectors][Wbini];
+          Double_t dCSSt_ave[TPIQi][Wbini];
+          for(Int_t iW = 0; iW < Wbini; iW++)
+          {
+            dCSSq_ave[iW] = 0.;
+            for(Int_t iSector = 0; iSector < sectors; iSector++)
+            {
+                dCSSq[iSector][iW] = 0.;
+                dCSSq_stat[iSector][iW] = 0.;
+                for(Int_t iT = 0; iT < TPIQi; iT++)
+                {
+                    dCSSt[iT][iSector][iW] = 0.;
+                    dCSSt_stat[iT][iSector][iW] = 0.;
+                    if(iSector==0)
+                    {
+                        dCSSt_ave[iT][iW] = 0.;
+                    }
+                }
+            }
+          }
           for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
           {
               Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
+              Double_t dCSSp[sectors][Wbini];
+              Double_t dCSSp_stat[sectors][Wbini];
+              Double_t dCSSp_ave[Wbini];
+              for(Int_t iW = 0; iW < Wbini; iW++)
+              {
+                dCSSp_ave[iW] = 0.;
+                for(Int_t iSector = 0; iSector < sectors; iSector++){
+                  dCSSp[iSector][iW] = 0.;
+                  dCSSp_stat[iSector][iW] = 0.;
+                }
+              }
+              /*dPT_Q2 += dP[iPcanv] * DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
+              dT_Ppi = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
+              if(Pbini-iThPiQ>0)
+              {
+                  for(Int_t iPmoth = 0; iPmoth < Pbini-iThPiQ; iPmoth++)
+                  {
+                      dPmom += dP[iPmoth];
+                  }
+              }
+              else{dPmom = 1.;}*/
               for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
               {
                 dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
@@ -3023,97 +3740,46 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 if(bQorNot==false)
                 {
                     dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
-                    dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
+                    dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
                 }
                 bin_vol = dPmom * dT * dQ2[iQ2] * dW;
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
-                //Double_t y_ave[iMod][iW] = 0.;
-                //Double_t var_stat[iMod][iW] = 0.;
                 sprintf(c_NAME,"hs_CSS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                 THStack * hs_CSS = new THStack(c_NAME,"");
-                sprintf(c_NAME,"h_CSdataS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
+                /*sprintf(c_NAME,"h_CSdataS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                 TH1D * h_CSdataS = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
-                h_CSdataS->Sumw2();
+                h_CSdataS->Sumw2();*/
                 for(Int_t iSector = 0; iSector < sectors; iSector++)
                 {
-                    ///gPad->SetLogy(); //cout << " s" << iSector;
-                    //if(iSector==3) continue;
-                    for(Int_t iMod = 0; iMod < models; iMod++)
-                    {//cout << "f" << iMod;[iPmom][iThPiQ][pm][s][f][iQ2][iW]
-                        sprintf(c_NAME,"h_CSS%d%d%d%d%d%d",iPcanv,iThPiQ,iCharge,iSector,iMod,iQ2);
+                        sprintf(c_NAME,"h_CSS%d%d%d%d%d",iPcanv,iThPiQ,iCharge,iSector,iQ2);
                         TH1D * h_CSS = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                         h_CSS->Sumw2();
                         for(Int_t iW = 0; iW < Wbini; iW++)
                         {
-                            /*if(iW == 25)
-                                {cout << endl <<"Before "<< iMod <<"\t"<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];}
-                            if(iMod!=iGEN || iMod!=iGENIE)
+                            h_CSS->SetBinContent(iW+1, y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]);
+                            h_CSS->SetBinError(iW+1, sqrt(y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]));
+                            /*if(iMod==iDATA && iSector==0)
                             {
-                                y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW];
-                            }
-                            if(iW == 25)
-                                {cout << endl <<"After  "<< iMod <<"\t"<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];}*/
-                            ///Scale h_CSS bins by total CS for onepigen
-                            if((iMod==iOPGr || iMod==iOPGn) && y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]!=0)
-                            {
-                                Double_t opg_error = tCS[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]/sqrt(y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]);
-                                h_CSS->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]);
-                                h_CSS->SetBinError(iW+1, opg_error);
-                            }
-                            else/// if(iMod==iDATA || iMod==iGENIE)///Do not scale h_CSS bins by total CS for non-onepigen (or bins have zero events)
-                            {
-                                h_CSS->SetBinContent(iW+1, y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]);
-                                h_CSS->SetBinError(iW+1, sqrt(y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]));
-                                if(iMod==iDATA && iSector==0)
-                                {
-                                    h_CSdataS->SetBinContent(iW+1, y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]);
-                                }
-                            }
-                            /*if(iW == 25 && iPmom ==2 && iThPiQ==2 && iQ2==0)
-                                {cout << iMod<<" "<<iSector<<" "<< h_CSS->GetBinContent(iW+1) <<" +- "<< h_CSS->GetBinError(iW+1)<<endl;}*/
+                                h_CSdataS->SetBinContent(iW+1, y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]);
+                            }*/
+                            dCSSq[iSector][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW];
+                            dCSSp[iSector][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW];
+                            dCSSt[iThPiQ][iSector][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW];
                         }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-                        //if (h_CSS->GetSumw2N() == 0) h_CSS->Sumw2(kTRUE);
-                        if(iMod==iDATA)//Data
+                        h_CSS->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));
+                        line = 1; mark = 8;  size = 2; marc = 1 + iSector;
+                        /*if(iSector==0)/// For Sector cross section ratios
+                        {/// Remember: cannot use this and regular cross sections
+                            h_CSdataS->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));
+                            //h_CSdataS = h_CSS;
+                        }*/
+                        /*else if(iSector==2) //do not need for ratios
                         {
-                            h_CSS->Scale(cm2ub * ub2nb / (L * bin_vol));
-                            line = 1; mark = 8;  size = 2; marc = 1 + iSector;
-                            /*if(iSector==0)/// For Sector cross section ratios
-                            {/// Remember: cannot use this and regular cross sections
-                                h_CSdataS->Scale(cm2ub * ub2nb / (L * bin_vol));
-                                //h_CSdataS = h_CSS;
-                            }*/
-                            /*else if(iSector==2) //do not need for ratios
-                            {
-                                h_CSdataS->Scale(1*Double_t(iSector));
-                            }*/
-                            //h_CSS->Divide(h_CSS,h_CSdataS);/// end of ratios
-                            //hs_CSS->Add(h_CSdataS);
-                            hs_CSS->Add(h_CSS);
-                        }
-                        else if(iMod==iGENIE)//GENIE reconstructed
-                        {
-                            h_CSS->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));
-                        }
-                        else if(iMod==iGEN)//GENIE generated
-                        {
-                            h_CSS->Scale(totalCS_MC[iGENmod] * ub2nb * (5./6.) / (MC_evts[iGENmod] * bin_vol));
-                        }
-                        else if(iMod==iOPGr && iCharge==0)//onepigen
-                        {
-                            h_CSS->Scale(ub2nb / (opg_gen_events[0] * bin_vol));
-                        }
-                        else if(iMod==iOPGr && iCharge==1)//onepigen pi-
-                        {
-                            h_CSS->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
-                        }
-                        else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
-                        {
-                            h_CSS->Scale(ub2nb / (opg_gen_events[2] * bin_vol));
-                        }
-                        else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
-                        {
-                            h_CSS->Scale(ub2nb / (opg_gen_events[3] * bin_vol));
-                        }
+                            h_CSdataS->Scale(1*Double_t(iSector));
+                        }*/
+                        //h_CSS->Divide(h_CSS,h_CSdataS);/// end of ratios
+                        //hs_CSS->Add(h_CSdataS);
+                        hs_CSS->Add(h_CSS);
                         h_CSS->SetLineColor(marc);
                         h_CSS->SetLineStyle(line);
                         h_CSS->SetMarkerStyle(mark);
@@ -3123,23 +3789,18 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         gStyle->SetErrorX(0);
                         for(Int_t iW = 0; iW < Wbini; iW++)
                         {
-                          //Double_t stat_error = cm2ub * ub2nb * sqrt(y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]) / (L * bin_vol);
+                          //Double_t stat_error = cm2ub * ub2nb * SecCorr * sqrt(y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]) / (L * bin_vol);
                           //h_CSS->SetBinError(iW+1, stat_error);
                           //if(iW == 25 && iPmom ==2 && iThPiQ==2 && iQ2==0 && iMod==iDATA)
                           //    {cout << iMod<<" "<<iSector<<" "<< h_CSS->GetBinContent(iW+1) <<" +- "<< h_CSS->GetBinError(iW+1)<<endl;}
-                          y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW] = h_CSS->GetBinContent(iW+1);
-                          y_ave[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]/CS_Sec;//# of sectors
-                          var_stat[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]  += pow(h_CSS->GetBinError(iW+1),2.);
+                          y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW] = h_CSS->GetBinContent(iW+1);
+                          y_ave[iPcanv][iThPiQ][iCharge][iQ2][iW] += y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]/CS_Sec;//# of sectors
+                          var_stat[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]  += pow(h_CSS->GetBinError(iW+1),2.);
                           /*if(iW == 25 && iPmom ==2 && iThPiQ==2 && iQ2==0 && iMod==iDATA)
-                              {cout <<" y_i= "<< y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW];
-                               cout <<"\t y_ave= "<< y_ave[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
-                               cout <<"\t var_stat= "<< var_stat[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW] <<endl;}*/
-                          if(iSector!=0 && iMod<iGEN)///Set tCS to sum of total CS for all sectors
-                          {
-                              tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW] += tCS[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW];
-                          }
+                              {cout <<" y_i= "<< y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW];
+                               cout <<"\t y_ave= "<< y_ave[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                               cout <<"\t var_stat= "<< var_stat[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW] <<endl;}*/
                         } // Note: for an array bin # of iW, the ROOT bin # is iW+1
-                    }
                 }
                     hs_CSS->Draw("nostack,e1p");
                     hs_CSS->GetYaxis()->SetLabelSize(label_size);
@@ -3148,23 +3809,51 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     hs_CSS->GetXaxis()->SetNdivisions(5);
                     hs_CSS->SetTitle(";;");//";W (GeV);CS");
                     //hs_CSS->Write();
-                for(Int_t iMod = 0; iMod < models; iMod++)
-                {
+                //for(Int_t iMod = 0; iMod < models; iMod++)
+                //{
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
                         Double_t A = 0., B = 0.;
                         for(Int_t iSector = 0; iSector < sectors; iSector++)
                         {
-                          A += pow(y_i[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW] - (y_ave[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]),2.);
-                          B += var_stat[iPcanv][iThPiQ][iCharge][iSector][iMod][iQ2][iW]/CS_Sec;//# of sectors?
+                          A += pow(y_i[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW] - (y_ave[iPcanv][iThPiQ][iCharge][iQ2][iW]),2.);
+                          B += var_stat[iPcanv][iThPiQ][iCharge][iSector][iQ2][iW]/CS_Sec;//# of sectors?
                         }
                         //if(iW == 25 && iPmom ==2 && iThPiQ==2 && iQ2==0 && iMod==iDATA)
                         //    {cout << iMod<<" "<< A <<"/4 - "<< B <<" \t y_ave = "<< y_ave[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] <<endl;}
-                        var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] = max(0.,(A/(CS_Sec - 1.)) - B);
+                        var[iPcanv][iThPiQ][iCharge][iQ2][iW] = max(0.,(A/(CS_Sec - 1.)) - B);
                         //if(iW == 25 && iPmom ==2 && iThPiQ==2 && iQ2==0 && iMod==iDATA)
                         //    {cout <<" var = "<< var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] <<endl;}
                     }
+                //}
+              }
+              for(Int_t iSector = 0; iSector < sectors; iSector++)
+              {
+                sprintf(c_NAME,"h_CSSp%d%d%d%d",iPcanv,iCharge,iSector,iQ2);
+                TH1D * h_CSSp = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                h_CSSp->Sumw2();
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    h_CSSp->SetBinContent(iW+1, dCSSp[iSector][iW]);
+                    h_CSSp->SetBinError(iW+1, sqrt(dCSSp[iSector][iW]));
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                h_CSSp->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    dCSSp[iSector][iW] = h_CSSp->GetBinContent(iW+1);
+                    dCSSp_ave[iW] += h_CSSp->GetBinContent(iW+1)/CS_Sec;
+                    dCSSp_stat[iSector][iW] += pow(h_CSSp->GetBinError(iW+1),2.);
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+              }
+              for(Int_t iW = 0; iW < Wbini; iW++)
+              {
+                Double_t A = 0., B = 0.;
+                for(Int_t iSector = 0; iSector < sectors; iSector++)
+                {
+                  A += pow(dCSSp[iSector][iW] - (dCSSp_ave[iW]),2.);
+                  B += dCSSp_stat[iSector][iW]/CS_Sec;//# of sectors?
                 }
+                varP[iPcanv][iCharge][iQ2][iW] = max(0.,(A/(CS_Sec - 1.)) - B);
               }
           }
           c1->Print(fileName);
@@ -3174,6 +3863,67 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
           else if(iCharge == 1 && iQ2 == 0) c1->Print(file_CSSq1pim);
           else if(iCharge == 1 && iQ2 == 1) c1->Print(file_CSSq2pim);
           else if(iCharge == 1 && iQ2 == 2) c1->Print(file_CSSq3pim);*/
+            ///Calculate 3D Theta_piq CSS
+            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            {
+              for(Int_t iSector = 0; iSector < sectors; iSector++)
+              {
+                sprintf(c_NAME,"h_CSSt%d%d%d%d",iThPiQ,iCharge,iSector,iQ2);
+                TH1D * h_CSSt = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                h_CSSt->Sumw2();
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    h_CSSt->SetBinContent(iW+1, dCSSt[iThPiQ][iSector][iW]);
+                    h_CSSt->SetBinError(iW+1, sqrt(dCSSt[iThPiQ][iSector][iW]));
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                h_CSSt->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    dCSSt[iThPiQ][iSector][iW] = h_CSSt->GetBinContent(iW+1);
+                    dCSSt_ave[iThPiQ][iW] += h_CSSt->GetBinContent(iW+1)/CS_Sec;
+                    dCSSt_stat[iThPiQ][iSector][iW] += pow(h_CSSt->GetBinError(iW+1),2.);
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+              }
+              for(Int_t iW = 0; iW < Wbini; iW++)
+              {
+                Double_t A = 0., B = 0.;
+                for(Int_t iSector = 0; iSector < sectors; iSector++)
+                {
+                  A += pow(dCSSt[iThPiQ][iSector][iW] - (dCSSt_ave[iThPiQ][iW]),2.);
+                  B += dCSSt_stat[iThPiQ][iSector][iW]/CS_Sec;//# of sectors?
+                }
+                varT[iThPiQ][iCharge][iQ2][iW] = max(0.,(A/(CS_Sec - 1.)) - B);
+              }
+            }
+            ///Calculate 2D Q2 AC
+            for(Int_t iSector = 0; iSector < sectors; iSector++)
+            {
+            sprintf(c_NAME,"h_CSSq%d%d%d",iCharge,iSector,iQ2);
+            TH1D * h_CSSq = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+            h_CSSq->Sumw2();
+            for(Int_t iW = 0; iW < Wbini; iW++)
+            {
+                h_CSSq->SetBinContent(iW+1, dCSSq[iSector][iW]);
+                h_CSSq->SetBinError(iW+1, sqrt(dCSSq[iSector][iW]));
+            }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+            h_CSSq->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));
+            for(Int_t iW = 0; iW < Wbini; iW++)
+            {
+                dCSSq[iSector][iW] = h_CSSq->GetBinContent(iW+1);
+                dCSSq_ave[iW] += h_CSSq->GetBinContent(iW+1)/CS_Sec;
+                dCSSq_stat[iSector][iW] += pow(h_CSSq->GetBinError(iW+1),2.);
+            }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+            }
+            for(Int_t iW = 0; iW < Wbini; iW++)
+            {
+            Double_t A = 0., B = 0.;
+            for(Int_t iSector = 0; iSector < sectors; iSector++)
+            {
+              A += pow(dCSSq[iSector][iW] - (dCSSq_ave[iW]),2.);
+              B += dCSSq_stat[iSector][iW]/CS_Sec;//# of sectors?
+            }
+            varQ[iCharge][iQ2][iW] = max(0.,(A/(CS_Sec - 1.)) - B);
+            }
       }
   }
   //Print page to file
@@ -3223,7 +3973,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
-                        dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
+                        dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
                     }
                     bin_vol = dPmom * dT * dQ2[iQ2] * dW;
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
@@ -3250,64 +4000,64 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         {
                             if(iMod==iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)///Load GENIE norad histograms with y_sum, rad with tCS
                             {
-                                h_CSmcr->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]);
+                                h_CSmcr->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
                                 h_CSmcn->SetBinContent(iW+1, y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW]);
-                                h_CSmcr->SetBinError(iW+1, sqrt(tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]));
+                                h_CSmcr->SetBinError(iW+1, sqrt(tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]));
                                 h_CSmcn->SetBinError(iW+1, sqrt(y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW]));
                                 ///Load Rad
-                                dCSq[0][iW] += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW];
-                                dCSp[0][iW] += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW];
-                                dCSt[iThPiQ][0][iW] += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW];
+                                dCSq[0][iW] += tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
+                                dCSp[0][iW] += tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
+                                dCSt[iThPiQ][0][iW] += tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
                                 ///Load NoRad
                                 dCSq[1][iW] += y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW];
                                 dCSp[1][iW] += y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW];
                                 dCSt[iThPiQ][1][iW] += y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW];
                                 if(iCharge==0 && iQ2==0 && iPcanv==2 && iThPiQ==0 && iW==35){
                                     cout << "# of evts: "<< y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] << "\t";
-                                    cout << "w of evts: "<< tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW] << "\t";
+                                    cout << "w of evts: "<< tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] << "\t";
                                 }
                             }
                             else if(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)///Scale h_CSopg bins by total CS for onepigen
                             {
-                                Double_t opg_error = tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
-                                h_CSopg->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]);
+                                Double_t opg_error = tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
+                                h_CSopg->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
                                 h_CSopg->SetBinError(iW+1, opg_error);
                             }
                         }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                         if(iMod==iOPGr && iCharge==0)//onepigen pi+
                         {
-                            h_CSopg->Scale(ub2nb / (opg_gen_events[0] * bin_vol));//kBlue
+                            h_CSopg->Scale(ub2nb * SecCorr / (opg_gen_events[0] * bin_vol));//kBlue
                             line = 1; mark = 26; size = 4; marc = 4; h_CSopg->SetLineColor(4);
                             h_CSopgpr = h_CSopg;
                         }
                         else if(iMod==iOPGr && iCharge==1)//onepigen pi-
                         {
-                            h_CSopg->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
+                            h_CSopg->Scale(ub2nb * SecCorr / (opg_gen_events[1] * bin_vol));/// <-------------------<<
                             line = 1; mark = 26; size = 4; marc = 4; h_CSopg->SetLineColor(4);//38
                             h_CSopgmr = h_CSopg;
                         }
                         else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
                         {
-                            h_CSopg->Scale(ub2nb / (opg_gen_events[2] * bin_vol));//kBlue
+                            h_CSopg->Scale(ub2nb * SecCorr / (opg_gen_events[2] * bin_vol));//kBlue
                             line = 1; mark = 26; size = 4; marc = 3; h_CSopg->SetLineColor(4);
                             h_CSopgpn = h_CSopg;
                         }
                         else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
                         {
-                            h_CSopg->Scale(ub2nb / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                            h_CSopg->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                             line = 1; mark = 26; size = 4; marc = 3; h_CSopg->SetLineColor(38);
                             h_CSopgmn = h_CSopg;
                         }
                         else if(iMod==iGENIEr)//GENIE rad
                         {
-                            h_CSmcn->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));/// <-------------------<<
-                            h_CSmcr->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_rad_evts[iGENmod] * bin_vol));/// <-------------------<<
-                            hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->Divide(h_CSmcr);
+                            h_CSmcn->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));/// <-------------------<<
+                            h_CSmcr->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod] * bin_vol));/// <-------------------<<
+                            //hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->Divide(h_CSmcr);
                             //line = 1; mark = 26; size = 4; marc = 3; h_CSopg->SetLineColor(38);
                         }
                         /*else if(iMod==iGENIE)//GENIE norad
                         {
-                            h_CSopg->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));/// <-------------------<<
+                            h_CSopg->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));/// <-------------------<<
                             line = 1; mark = 26; size = 4; marc = 3; h_CSopg->SetLineColor(38);
                             h_CSmcn = h_CSopg;
                         }*/
@@ -3331,10 +4081,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         {
                             Double_t RadContent = h_CSmcr->GetBinContent(iW+1);
                             Double_t NoRadContent = h_CSmcn->GetBinContent(iW+1);
-                            Double_t RadError = h_CSmcr->GetBinError(iW+1);
-                            Double_t NoRadError = h_CSmcn->GetBinError(iW+1);
-                            Double_t RatioError = RadContent/NoRadContent*sqrt(pow(RadError/RadContent,2)+pow(NoRadError/NoRadContent,2));
-                            hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, RatioError);
+                            Double_t RadError = RC_unc_per*abs((NoRadContent/RadContent)-1);
+                            hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetBinError(iW+1, RadError);
                         }
                     }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                 }
@@ -3342,20 +4090,22 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 hr_RCp[iPcanv][iCharge][iQ2]->Sumw2();
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
-                    h_CSradP->SetBinContent(iW+1, dCSp[0][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    h_CSnoradP->SetBinContent(iW+1, dCSp[1][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    if(dCSp[1][iW] > 0. && dCSp[1][iW] < 100. && dCSp[0][iW] > 0. && dCSp[0][iW] < 100.){
-                        Double_t ratio_radp = h_CSradP->GetBinContent(iW+1)/h_CSnoradP->GetBinContent(iW+1);
-                        hr_RCp[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, h_CSradP->GetBinContent(iW+1)/h_CSnoradP->GetBinContent(iW+1));
-                        Double_t error_p = ratio_radp * sqrt(pow(sqrt(dCSp[0][iW])/dCSp[0][iW],2)+pow(sqrt(dCSp[1][iW])/dCSp[1][iW],2));
+                    h_CSradP->SetBinContent(iW+1, dCSp[0][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod]));
+                    h_CSnoradP->SetBinContent(iW+1, dCSp[1][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                    if(dCSp[1][iW] > 0.){
+                        Double_t ratio_radp = h_CSnoradP->GetBinContent(iW+1)/h_CSradP->GetBinContent(iW+1);
+                        Double_t error_p = RC_unc_per*abs(ratio_radp-1);
+                        hr_RCp[iPcanv][iCharge][iQ2]->SetBinContent(iW+1, 1./ratio_radp);
                         hr_RCp[iPcanv][iCharge][iQ2]->SetBinError(iW+1, error_p);
                         //cout <<"P: "<<iW<<"\t"<<hr_RCp[iPcanv][iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-                hr_ARCp[iPcanv][iCharge][iQ2]->Divide(h_CSradP);
+                //hr_ARCp[iPcanv][iCharge][iQ2]->Divide(h_CSradP);
             }
             ///Calculate 3D Theta_piq RC
-            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            Int_t iThPiQmax = TPIQi;
+            if(bQorNot==false && iCharge==1){iThPiQmax = TPIQi+1;}
+            for(Int_t iThPiQ = 0; iThPiQ < iThPiQmax; iThPiQ++)
             {
                 hr_RCt[iThPiQ][iCharge][iQ2]->Sumw2();
                 sprintf(c_NAME,"h_CSradT%d%d%d",iThPiQ,iCharge,iQ2);
@@ -3364,33 +4114,33 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 TH1D * h_CSnoradT = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
-                    h_CSradT->SetBinContent(iW+1, dCSt[iThPiQ][0][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    h_CSnoradT->SetBinContent(iW+1, dCSt[iThPiQ][1][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                    if(dCSt[iThPiQ][1][iW] > 0. && dCSt[iThPiQ][1][iW] < 100. && dCSt[iThPiQ][0][iW] > 0. && dCSt[iThPiQ][0][iW] < 100.){
-                        Double_t ratio_radt = h_CSradT->GetBinContent(iW+1)/h_CSnoradT->GetBinContent(iW+1);
-                        hr_RCt[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, h_CSradT->GetBinContent(iW+1)/h_CSnoradT->GetBinContent(iW+1));
-                        Double_t error_t = ratio_radt * sqrt(pow(sqrt(dCSt[iThPiQ][0][iW])/dCSt[iThPiQ][0][iW],2)+pow(sqrt(dCSt[iThPiQ][1][iW])/dCSt[iThPiQ][1][iW],2));
+                    h_CSradT->SetBinContent(iW+1, dCSt[iThPiQ][0][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod]));
+                    h_CSnoradT->SetBinContent(iW+1, dCSt[iThPiQ][1][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                    if(dCSt[iThPiQ][1][iW] > 0.){
+                        Double_t ratio_radt = h_CSnoradT->GetBinContent(iW+1)/h_CSradT->GetBinContent(iW+1);
+                        Double_t error_t = RC_unc_per*abs(ratio_radt-1);
+                        hr_RCt[iThPiQ][iCharge][iQ2]->SetBinContent(iW+1, 1./ratio_radt);
                         hr_RCt[iThPiQ][iCharge][iQ2]->SetBinError(iW+1, error_t);
                         //cout <<"T: "<<iW<<"\t"<<hr_RCt[iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-                hr_ARCt[iThPiQ][iCharge][iQ2]->Divide(h_CSradT);
+                //hr_ARCt[iThPiQ][iCharge][iQ2]->Divide(h_CSradT);
             }
             ///Calculate 2D Q2 RC
             hr_RCq[iCharge][iQ2]->Sumw2();
             for(Int_t iW = 0; iW < Wbini; iW++)
             {
-                h_CSradQ->SetBinContent(iW+1, dCSq[0][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                h_CSnoradQ->SetBinContent(iW+1, dCSq[1][iW]);// * totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod]));
-                if(dCSq[1][iW] > 0. && dCSq[1][iW] < 100. && dCSq[0][iW] > 0. && dCSq[0][iW] < 100.){
+                h_CSradQ->SetBinContent(iW+1, dCSq[0][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod]));
+                h_CSnoradQ->SetBinContent(iW+1, dCSq[1][iW] * totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod]));
+                if(dCSq[1][iW] > 0.){
                     hr_RCq[iCharge][iQ2]->SetBinContent(iW+1, h_CSradQ->GetBinContent(iW+1)/h_CSnoradQ->GetBinContent(iW+1));
-                    Double_t ratio_radq = h_CSradQ->GetBinContent(iW+1)/h_CSnoradQ->GetBinContent(iW+1);
-                    Double_t error_q = ratio_radq * sqrt(pow(sqrt(dCSq[0][iW])/dCSq[0][iW],2)+pow(sqrt(dCSq[1][iW])/dCSq[1][iW],2));
+                    Double_t ratio_radq = h_CSnoradQ->GetBinContent(iW+1)/h_CSradQ->GetBinContent(iW+1);
+                    Double_t error_q = RC_unc_per*abs(ratio_radq-1);
                     hr_RCq[iCharge][iQ2]->SetBinError(iW+1, error_q);
                     //cout <<"Q: "<<iW<<"\t"<<hr_RCq[iCharge][iQ2]->GetBinContent(iW+1)<<endl;
                 }
             }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-            hr_ARCq[iCharge][iQ2]->Divide(h_CSradQ);
+            //hr_ARCq[iCharge][iQ2]->Divide(h_CSradQ);
         }
     }///End of RC loops
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)///Start of onepigen RC calculator loops
@@ -3498,6 +4248,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
     }
   //c1->Clear();
   //c1->Divide(TPIQi,Pbini);
+  Double_t iRadYMax = 1.9; size=2; label_size = 0.11;
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)///Start of GENIE RC printing loops
     {
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
@@ -3510,36 +4261,40 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 {
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
                     gPad->SetLogy(0);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
                     //hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->Write("e1p");
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(0.09);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(2.0);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.0);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
-                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(0.09);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetStats(0);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetLineStyle(line);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerStyle(mark_d);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetMarkerSize(size);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(label_size);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(iRadYMax);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.0);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
+                    hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(label_size);
                     if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==0)
                     {
-                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   0.70 < Q2 < 1.0;;");}
-                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   0.70 < Q2 < 1.0;;");}
+                        if(iCharge == 0){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   0.70 < Q2 < 1.0;;");}
+                        else if(iCharge == 1){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   0.70 < Q2 < 1.0;;");}
                     }
                     else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==1)
                     {
-                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.0 < Q2 < 1.4;;");}
-                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.0 < Q2 < 1.4;;");}
+                        if(iCharge == 0){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.0 < Q2 < 1.4;;");}
+                        else if(iCharge == 1){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.0 < Q2 < 1.4;;");}
                     }
                     else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==2)
                     {
-                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.4 < Q2 < 1.9;;");}
-                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.4 < Q2 < 1.9;;");}
+                        if(iCharge == 0){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.4 < Q2 < 1.9;;");}
+                        else if(iCharge == 1){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.4 < Q2 < 1.9;;");}
                     }
                     else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==3)
                     {
-                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.9 < Q2 < 2.5;;");}
-                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.9 < Q2 < 2.5;;");}
+                        if(iCharge == 0){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi+   1.9 < Q2 < 2.5;;");}
+                        else if(iCharge == 1){hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE pi-   1.9 < Q2 < 2.5;;");}
                     }
-                    TLine *lRadCorrAve = new TLine(WbinEdge[iQ2][0],RadFitAve[iCharge],WbinEdge[iQ2][1],RadFitAve[iCharge]);
-                    lRadCorrAve->Draw();
+                    //TLine *lRadCorrAve = new TLine(WbinEdge[iQ2][0],RadFitAve[iCharge],WbinEdge[iQ2][1],RadFitAve[iCharge]);
+                    //lRadCorrAve->Draw();
                 }
             }
             /*if(iCharge == 0 && iQ2 == 0)      c1->Print(file_CSradq1pip);
@@ -3554,6 +4309,178 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
         }
     }
   c1->Clear();
+  c1->Divide(Pbini,Q2bini);
+    ///Check 3D ratios
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+                Int_t iPcanv = iPmom;//Needed to get plot positions correct for P_pi
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                //gPad->SetLogy(0);
+                hr_RCp[iPcanv][iCharge][iQcanv]->Draw("e1p");
+                hr_RCp[iPcanv][iCharge][iQcanv]->Write("e1p");
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetStats(0);
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetLineStyle(line);
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_RCp[iPcanv][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_RCp[iPcanv][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetMaximum(iRadYMax);
+                hr_RCp[iPcanv][iCharge][iQcanv]->SetMinimum(0.);
+                hr_RCp[iPcanv][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_RCp[iPcanv][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iPcanv==2)
+                {
+                    if(iCharge == 0){hr_RCp[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and P_pi;;");}
+                    else if(iCharge == 1){hr_RCp[iPcanv][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and P_pi;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+    }
+  c1->Clear();
+  c1->Divide(TPIQi,Q2bini);
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)
+    {canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+            {
+                c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                gPad->SetLogy(0);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->Draw("e1p");
+                hr_RCt[iThPiQ][iCharge][iQcanv]->Write("e1p");
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetStats(0);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetLineStyle(line);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetMarkerStyle(mark_d);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetMarkerSize(size);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetMaximum(iRadYMax);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->SetMinimum(0.);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+                hr_RCt[iThPiQ][iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+                gStyle->SetEndErrorSize(10);
+                gStyle->SetErrorX(0);
+                if(iQcanv == 3 && iThPiQ==2)
+                {
+                    if(iCharge == 0){hr_RCt[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi+   Q2 and Theta_piq;;");}
+                    else if(iCharge == 1){hr_RCt[iThPiQ][iCharge][iQcanv]->SetTitle("3D GENIE gen/recon pi-   Q2 and Theta_piq;;");}
+                }
+            }
+        }
+        c1->Print(fileName);
+    }
+  //Print page to file
+  c1->Clear();
+  c1->Divide(2,2);
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)///Start of GENIE RCq printing loops
+    {
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+            c1->cd(canvas); canvas++; //Needed to get plot positions correct
+            gPad->SetLogy(0);
+            hr_RCq[iCharge][iQcanv]->Draw("e1p");
+            hr_RCq[iCharge][iQcanv]->SetStats(0);
+            hr_RCq[iCharge][iQcanv]->SetLineStyle(line);
+            hr_RCq[iCharge][iQcanv]->SetMarkerStyle(mark_d);
+            hr_RCq[iCharge][iQcanv]->SetMarkerSize(size);
+            hr_RCq[iCharge][iQcanv]->GetYaxis()->SetNdivisions(4);
+            hr_RCq[iCharge][iQcanv]->GetYaxis()->SetLabelSize(label_size);
+            hr_RCq[iCharge][iQcanv]->SetMaximum(iRadYMax);
+            hr_RCq[iCharge][iQcanv]->SetMinimum(0.0);
+            hr_RCq[iCharge][iQcanv]->GetXaxis()->SetNdivisions(4);
+            hr_RCq[iCharge][iQcanv]->GetXaxis()->SetLabelSize(label_size);
+            if(iQcanv==2)
+            {
+                if(iCharge == 0){hr_RCq[iCharge][iQcanv]->SetTitle("GENIE RC pi+;;");}
+                else if(iCharge == 1){hr_RCq[iCharge][iQcanv]->SetTitle("GENIE RC pi-;;");}
+            }
+        }
+        c1->Print(fileName);
+    }
+  c1->Clear();
+  /*c1->Divide(TPIQi,Pbini);
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)///Start of GENIE ARC printing loops
+    {
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            canvas = 1;
+            for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
+            {
+                Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
+                for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
+                {
+                    c1->cd(canvas); canvas++; //Needed to get plot positions correct
+                    gPad->SetLogy(0);
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->Draw("e1p");
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetYaxis()->SetLabelSize(0.09);
+                    //hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetMaximum(2.0);
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetMinimum(0.0);
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
+                    hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetXaxis()->SetLabelSize(0.09);
+                    if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==0)
+                    {
+                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi+   0.70 < Q2 < 1.0;;");}
+                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi-   0.70 < Q2 < 1.0;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==1)
+                    {
+                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi+   1.0 < Q2 < 1.4;;");}
+                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi-   1.0 < Q2 < 1.4;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==2)
+                    {
+                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi+   1.4 < Q2 < 1.9;;");}
+                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi-   1.4 < Q2 < 1.9;;");}
+                    }
+                    else if(iThPiQ == 2 && iPcanv == Pbini - 1 && iQ2==3)
+                    {
+                        if(iCharge == 0){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi+   1.9 < Q2 < 2.5;;");}
+                        else if(iCharge == 1){hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->SetTitle("GENIE ARC pi-   1.9 < Q2 < 2.5;;");}
+                    }
+                    TLine *lRadCorrAve = new TLine(WbinEdge[iQ2][0],RadFitAve[iCharge],WbinEdge[iQ2][1],RadFitAve[iCharge]);
+                    lRadCorrAve->Draw();
+                }
+            }
+            c1->Print(fileName);
+        }
+    }
+  c1->Clear();
+  c1->Divide(2,2);
+    for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)///Start of GENIE ARCq printing loops
+    {
+        canvas = 1;
+        for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+        {
+            c1->cd(canvas); canvas++; //Needed to get plot positions correct
+            gPad->SetLogy(0);
+            hr_ARCq[iCharge][iQ2]->Draw("e1p");
+            hr_ARCq[iCharge][iQ2]->GetYaxis()->SetNdivisions(4);
+            hr_ARCq[iCharge][iQ2]->GetYaxis()->SetLabelSize(0.09);
+            //hr_ARCq[iCharge][iQ2]->SetMaximum(2.0);
+            hr_ARCq[iCharge][iQ2]->SetMinimum(0.0);
+            hr_ARCq[iCharge][iQ2]->GetXaxis()->SetNdivisions(4);
+            hr_ARCq[iCharge][iQ2]->GetXaxis()->SetLabelSize(0.09);
+            if(iQ2==2)
+            {
+                if(iCharge == 0){hr_ARCq[iCharge][iQ2]->SetTitle("GENIE ARC pi+;;");}
+                else if(iCharge == 1){hr_ARCq[iCharge][iQ2]->SetTitle("GENIE ARC pi-;;");}
+            }
+        }
+        c1->Print(fileName);
+    }
+  c1->Clear();*/
   c1->Divide(TPIQi,Pbini);
   //-------------------------------------------------Write to file------------------------------------------//
   ///CStxtFile << "*******************************************************************************************" << endl;
@@ -3561,18 +4488,17 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   ///else             {CStxtFile << "4D binning: Q2, P_pi and Theta_pi" << endl;}
   ///CStxtFile << "*******************************************************************************************" << endl;
   ///CStxtFile << "iMod\t iChrg\t iQ2\t iPcanv\t iTheta\t W\t CS\t error" << endl;
-  ifstream unc_pid("delta_a2_unc_pid.txt");
-  ifstream unc_Vze("delta_a2_unc_vze.txt");
-  ifstream unc_Vre("delta_a2_unc_vpe.txt");
-  ifstream unc_Vrpi("delta_a2_unc_vppi.txt");
-  ifstream unc_Vdiff("delta_a2_unc_vd.txt");
-  unsigned int iunc_bin = 0;
+  ifstream unc_pid("delta_"+ver+"_unc_pid.txt");
+  ifstream unc_Vze("delta_"+ver+"_unc_vze.txt");
+  ifstream unc_Vre("delta_"+ver+"_unc_vpe.txt");
+  ifstream unc_Vrpi("delta_"+ver+"_unc_vppi.txt");
+  ifstream unc_Vdiff("delta_"+ver+"_unc_vdiff.txt");
+  unsigned int iunc_bin = 0, iNYdiv = 5, iNXdiv = 5;
     line = 1, size = 3, marc = 2, mark_d = 8;
     label_size = 0.11;//0.06 0.09
     Double_t xlab_size = 0.11;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// cross sections
     {
-        //Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2)+pow(RadFitUnc[iCharge],2));
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
         {
             canvas = 1;
@@ -3588,7 +4514,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
-                        dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
+                        dPmom = dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv];
                     }
                     bin_vol = dPmom * dT * dQ2[iQ2] * dW;
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
@@ -3608,20 +4534,28 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                             /// Acceptance and radiative corrections
                             Double_t ACorr = hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1);
                             Double_t RCorr = hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1);
+                            /*if(RCorr<=0. && CSvalue[iDATA][iW]!=0.){
+                                //cout<<"Negative RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" p"<<iPmom<<" t"<<iThPiQ<<" w"<<iW<<endl;
+                            }*/
                             if(bAC == false){ACorr=1.;}
                             if(bRAD == false){RCorr=1.;}
+                            if(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]==0.)
+                            {
+                                ACorr=0.; RCorr=1.;
+                            }
                             if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                Double_t opg_error = tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
-                                h_CS->SetBinContent(iW+1, ACorr * tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQ2][iW]);
+                                Double_t opg_error = tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
+                                h_CS->SetBinContent(iW+1, tCS[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]);
                                 h_CS->SetBinError(iW+1, opg_error);
                                 //h_CS->Scale(hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1));/// Acceptance corrections
                             }
-                            else if(iMod>=iGENIEr && RCorr>0. && RCorr<10.)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
+                            else if(iMod>=iGENIEr && RCorr>0. && RCorr<10. && ACorr<ACyMax)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
                             {
                                 Double_t y_val = y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
                                 /// Set cross section bin values and errors
-                                h_CS->SetBinContent(iW+1, y_val * ACorr/RCorr);
+                                if(iMod==iGEN){h_CS->SetBinContent(iW+1, y_val);}//GENIE truth
+                                else{h_CS->SetBinContent(iW+1, y_val * ACorr/RCorr);}//GENIE, GENIE radiative, and Data
                                 h_CS->SetBinError(iW+1, sqrt(y_val));
                                 //if(RCorr>0.){
                                 //    h_CS->Scale(ACorr/RCorr);
@@ -3629,7 +4563,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                                 //else{h_CS->Scale(ACorr);}
                                 if(iMod==iDATA && txtFile.is_open())///For cut analysis
                                 {
-                                    Double_t BinEntries = y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] *cm2ub*ub2nb/(L*bin_vol*RadFitAve[iCharge]);
+                                    Double_t BinEntries = y_sum[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW] *cm2ub*ub2nb * SecCorr/(L*bin_vol*RadFitAve[iCharge]);
                                     BinEntries *= ACorr/RCorr;//hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1);
                                     txtFile << BinEntries << endl;
                                 }
@@ -3638,11 +4572,17 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
                         if(iMod==iDATA)//Data
                         {
-                            h_CS->Scale(cm2ub * ub2nb / (L * bin_vol));//kBlack
+                            h_CS->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));//kBlack
                             //h_CS->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                             line = 1; mark = 8;  size = 5; marc = 1; h_CS->SetLineColor(1);
                         }
                         else if(iMod==iGENIE)//GENIE
+                        {
+                            h_CS->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
+                            //h_CS->Scale(pntF * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));
+                            line = 1; mark = 32; size = 5; marc = 2; h_CS->SetLineColor(2);
+                        }
+                        else if(iMod==iGEN)//GENIE truth (GEN)
                         {
                             h_CS->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
                             //h_CS->Scale(pntF * ub2nb / (MC_evts[iGENmod] * bin_vol));
@@ -3650,29 +4590,29 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         }
                         if(iMod==iGENIEr)//Data
                         {
-                            h_CS->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_rad_evts[iGENmod] * bin_vol));
+                            h_CS->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod] * bin_vol));
                             line = 1; mark = 32;  size = 5; marc = 6; h_CS->SetLineColor(6);
                         }
                         else if(iMod==iOPGr && iCharge==0)//onepigen pi+
                         {
-                            h_CS->Scale(ub2nb / (opg_gen_events[0] * bin_vol));//kBlue
+                            h_CS->Scale(ub2nb * SecCorr / (opg_gen_events[0] * bin_vol));//kBlue
                             //h_CS->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                             line = 1; mark = 26; size = 4; marc = 4; h_CS->SetLineColor(4);
                         }
                         else if(iMod==iOPGr && iCharge==1)//onepigen pi-
                         {
-                            h_CS->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
+                            h_CS->Scale(ub2nb * SecCorr / (opg_gen_events[1] * bin_vol));/// <-------------------<<
                             //h_CS->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                             line = 1; mark = 26; size = 4; marc = 4; h_CS->SetLineColor(4);//38
                         }
                         else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
                         {
-                            h_CS->Scale(ub2nb / (opg_gen_events[2] * bin_vol));//kBlue
+                            h_CS->Scale(ub2nb * SecCorr / (opg_gen_events[2] * bin_vol));//kBlue
                             line = 1; mark = 26; size = 4; marc = 4; h_CS->SetLineColor(4);//marc=3
                         }
                         else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
                         {
-                            h_CS->Scale(ub2nb / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                            h_CS->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                             line = 1; mark = 26; size = 4; marc = 4; h_CS->SetLineColor(4);//38);
                         }
                         h_CS->SetLineStyle(line);
@@ -3712,40 +4652,73 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                                     unc_Vdiff >> dunc_Vdiff;
                                 }
                                 iunc_bin++;
-                                Double_t error = pow(h_CS->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
-                                error += var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];               //sector-by-sector uncertainty
+                                Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
+                                //CSscale *= hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1)/hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetBinContent(iW+1);
+                                Double_t err_s = pow(h_CS->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
+                                Double_t error = err_s;                                             //statistical
+                                error += var[iPcanv][iThPiQ][iCharge][iQ2][iW];               //sector-by-sector uncertainty
                                 //error += pow(b2b_error * h_CS->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
-                                //error += pow(0.1 * cm2ub * ub2nb / (L * bin_vol),2);                //normalization uncertainty
+                                //error += pow(0.1 * cm2ub * ub2nb * SecCorr / (L * bin_vol),2);   //normalization uncertainty
                                 //Double_t radunc = RadFitUnc[iCharge];///radiative correction uncertainty (onepigen)
                                 Double_t radunc = hr_CSmc[iPcanv][iThPiQ][iCharge][iQ2]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                                Double_t accunc = hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                                //Double_t ARCunc = hr_ARC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinError(iW+1);///acc & rad correction uncertainty (GENIE)
+                                //error += pow(ARCunc * h_CS->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
                                 error += pow(radunc * h_CS->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                                error += pow(accunc * h_CS->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
                                 error += pow(u_eID * h_CS->GetBinContent(iW+1),2); //eID uncertainty
-                                error += pow(dunc_pid * h_CS->GetBinContent(iW+1),2); //piID uncertainty
-                                error += pow(dunc_Vze * h_CS->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
-                                error += pow(dunc_Vre * h_CS->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
-                                error += pow(dunc_Vrpi * h_CS->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
-                                error += pow(dunc_Vdiff * h_CS->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                error += pow(dunc_pid * CSscale * h_CS->GetBinContent(iW+1),2); //piID uncertainty
+                                error += pow(dunc_Vze * CSscale * h_CS->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                error += pow(dunc_Vre * CSscale * h_CS->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                error += pow(dunc_Vrpi * CSscale * h_CS->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                error += pow(dunc_Vdiff * CSscale * h_CS->GetBinContent(iW+1),2); //vertex z difference uncertainty
                                 error += pow(u_TW * h_CS->GetBinContent(iW+1),2); //target uncertainty
+                                if(h_CS->GetBinContent(iW+1)==0.){error=0.;}
                                 if(iMod==iDATA && iQ2==0 && iCharge==0 && iThPiQ<2 && error>0.){
-                                cout <<endl<<"***********************************************\n";
-                                cout <<endl<<"P: "<<iPcanv<<"   T: "<<iThPiQ<<"   W: "<<iW;
-                                cout <<endl<<"Statistical: "<< pow(h_CS->GetBinError(iW+1),2);
-                                cout <<endl<<"Sec-by-Sec:  "<< var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
-                                cout <<endl<<"Radiative:   "<< pow(radunc * h_CS->GetBinContent(iW+1),2);
-                                cout <<endl<<"Electron ID: "<< pow(u_eID * h_CS->GetBinContent(iW+1),2); //eID uncertainty
-                                cout <<endl<<"Pion ID:     "<< pow(dunc_pid * h_CS->GetBinContent(iW+1),2); //piID uncertainty
-                                cout <<endl<<"e- Vertex Z: "<< pow(dunc_Vze * h_CS->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
-                                cout <<endl<<"e- V_perp:   "<< pow(dunc_Vre * h_CS->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
-                                cout <<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * h_CS->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
-                                cout <<endl<<"Vdiff:       "<< pow(dunc_Vdiff * h_CS->GetBinContent(iW+1),2); //vertex z difference uncertainty
-                                cout <<endl<<"Target:      "<< pow(u_TW * h_CS->GetBinContent(iW+1),2); //target uncertainty
-                                cout <<endl<<"Total Uncer: "<< error; //total uncertainty
-                                cout <<endl<<"***********************************************\n";
+                                    cout <<endl<<"***********************************************\n";
+                                    cout <<endl<<"P: "<<iPcanv<<"   T: "<<iThPiQ<<"   W: "<<iW;
+                                    cout <<endl<<"Statistical: "<< err_s;
+                                    cout <<endl<<"Sec-by-Sec:  "<< var[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                    cout <<endl<<"Radiative:   "<< pow(radunc * h_CS->GetBinContent(iW+1),2);
+                                    cout <<endl<<"Electron ID: "<< pow(u_eID * h_CS->GetBinContent(iW+1),2); //eID uncertainty
+                                    cout <<endl<<"Pion ID:     "<< pow(dunc_pid * h_CS->GetBinContent(iW+1),2); //piID uncertainty
+                                    cout <<endl<<"e- Vertex Z: "<< pow(dunc_Vze * h_CS->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                    cout <<endl<<"e- V_perp:   "<< pow(dunc_Vre * h_CS->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                    cout <<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * h_CS->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                    cout <<endl<<"Vdiff:       "<< pow(dunc_Vdiff * h_CS->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                    cout <<endl<<"Target:      "<< pow(u_TW * h_CS->GetBinContent(iW+1),2); //target uncertainty
+                                    cout <<endl<<"Total Uncer: "<< error; //total uncertainty
+                                    cout <<endl<<"***********************************************\n";
+                                }
+                                if(ErrtxtFile.is_open() && iMod==iDATA && iCharge==0 && iQ2==0 && (iW==37 || iW==27 || iW==22))/// Checking uncertainties at W = 2.0 GeV
+                                {
+                                  if((iPcanv==1&&iThPiQ==0) || (iPcanv==0&&iThPiQ>=1)){
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                    ErrtxtFile<<endl<<"C: "<<iCharge<<"  Q: "<<iQ2<<"  P: "<<iPcanv<<"   T: "<<iThPiQ<<"   W: "<<iW;
+                                    ErrtxtFile<<"   y_sum: "<<y_sum[iPcanv][iThPiQ][iCharge][iDATA][iQ2][iW];
+                                    ErrtxtFile<<endl<<"GENIE   y_sum(iGEN): "<<y_sum[iPcanv][iThPiQ][iCharge][iGEN][iQ2][iW];
+                                    ErrtxtFile<<"   y_sume: "<<y_sume[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                    ErrtxtFile<<"   y_sum(iGENIE): "<<y_sum[iPcanv][iThPiQ][iCharge][iGENIE][iQ2][iW];
+                                    ErrtxtFile<<endl<<"Statistical: "<< err_s;
+                                    ErrtxtFile<<endl<<"Sec-by-Sec:  "<< var[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                    //ErrtxtFile<<endl<<"Acc & Rad:   "<< pow(ARCunc * h_CS->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Radiative:   "<< pow(radunc * h_CS->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Acceptance:  "<< pow(accunc * h_CS->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Electron ID: "<< pow(u_eID * h_CS->GetBinContent(iW+1),2); //eID uncertainty
+                                    ErrtxtFile<<endl<<"Pion ID:     "<< pow(dunc_pid * CSscale * h_CS->GetBinContent(iW+1),2); //piID uncertainty
+                                    ErrtxtFile<<endl<<"e- Vertex Z: "<< pow(dunc_Vze * CSscale * h_CS->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                    ErrtxtFile<<endl<<"e- V_perp:   "<< pow(dunc_Vre * CSscale * h_CS->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * CSscale * h_CS->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"Vdiff:       "<< pow(dunc_Vdiff * CSscale * h_CS->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                    ErrtxtFile<<endl<<"Target:      "<< pow(u_TW * h_CS->GetBinContent(iW+1),2); //target uncertainty
+                                    ErrtxtFile<<endl<<"Total Uncer: "<< error; //total uncertainty
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                  }
                                 }
                                 h_CS->SetBinError(iW+1, sqrt(error));
-                                var_sum += var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
-                                if(var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW]!=0)
-                                    var_num += y_ave[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];
+                                var_sum += var[iPcanv][iThPiQ][iCharge][iQ2][iW];
+                                if(var[iPcanv][iThPiQ][iCharge][iQ2][iW]!=0)
+                                    var_num += y_ave[iPcanv][iThPiQ][iCharge][iQ2][iW];
                                 CSvalue[iMod][iW] = h_CS->GetBinContent(iW+1);
                                 CSerror[iMod][iW] = h_CS->GetBinError(iW+1);
                             }
@@ -3755,11 +4728,16 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         {
                             for(Int_t iW = 0; iW < Wbini; iW++)
                             {
+                                Double_t err_s = pow(h_CS->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
+                                Double_t error = err_s;                                             //statistical
+                                //Double_t accunc = hr_AC[iPcanv][iThPiQ][iCharge][iQ2]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                                //error += pow(accunc * h_CS->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                                h_CS->SetBinError(iW+1, sqrt(error));
                                 CSvalue[iMod][iW] = h_CS->GetBinContent(iW+1);
                                 CSerror[iMod][iW] = h_CS->GetBinError(iW+1);
                             }
                         }
-                        if(iMod==iDATA || iMod==iGENIE || iMod==iGENIEr || (iMod==iOPGn && bMultiPion==false))
+                        if(iMod==iDATA || iMod==iGEN || (iMod==iOPGn && bMultiPion==false))
                             {
                                 hs_CS->Add(h_CS);
                             }
@@ -3779,8 +4757,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         for(Int_t iW = 0; iW < Wbini; iW++)
                         {
                             Double_t Wvalue  = CS_Wmin + 0.025*(Double_t(iW)+1.);
-                            CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGENIE][iW];
-                            CStxtFile << "," << CSerror[iGENIE][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
+                            CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGEN][iW];
+                            CStxtFile << "," << CSerror[iGEN][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
                         }
                     }
                     CStxtFile.close();
@@ -3788,8 +4766,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     //hs_CS->Write("nostack,e1p");
                     hs_CS->GetYaxis()->SetLabelSize(label_size);//0.05 or label_size
                     hs_CS->SetMinimum(0.0);
-                    hs_CS->GetYaxis()->SetNdivisions(3);
-                    hs_CS->GetXaxis()->SetNdivisions(4);
+                    hs_CS->GetYaxis()->SetNdivisions(iNYdiv);
+                    hs_CS->GetXaxis()->SetNdivisions(iNXdiv);
                     //if(iPcanv == 0 && iThPiQ == 0 && iCharge == 0)
                     //{
                         hs_CS->GetXaxis()->SetTitleOffset(1.5);
@@ -3861,19 +4839,24 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   //CStxtFile << "2D binning: Q2" << endl;
   //CStxtFile << "*******************************************************************************************" << endl;
   //CStxtFile << "iMod\t iChrg\t iQ2\t W\t CS\t error" << endl;
+  ifstream unc_pid_q2("2D_delta_"+ver+"_unc_pid.txt");
+  ifstream unc_Vze_q2("2D_delta_"+ver+"_unc_vze.txt");
+  ifstream unc_Vre_q2("2D_delta_"+ver+"_unc_vpe.txt");
+  ifstream unc_Vrpi_q2("2D_delta_"+ver+"_unc_vppi.txt");
+  ifstream unc_Vdiff_q2("2D_delta_"+ver+"_unc_vdiff.txt");
+  iunc_bin = 0;
   c1->Divide(2,2);
     line = 1, size = 3, marc = 2, mark_d = 8;
-    //label_size = 0.11;//0.06 0.09
+    label_size = 0.11;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// cross sections
     {
-        Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2)+pow(RadFitUnc[iCharge],2));
+        //Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2));
         canvas = 1;
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
         {
             Double_t CSvalue[models][Wbini];
             Double_t CSerror[models][Wbini];
             Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
-            bin_vol = dQ2[iQcanv] * dW;
             c1->cd(canvas); canvas++; //Needed to get plot positions correct
             sprintf(c_NAME,"hs_CSq%d%d",iCharge,iQcanv);
             THStack * hs_CSq = new THStack(c_NAME,"");
@@ -3884,6 +4867,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 sprintf(c_NAME,"h_CSq%d%d%d",iCharge,iQcanv,iMod);
                 TH1D * h_CSq = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 h_CSq->Sumw2(); //https://root-forum.cern.ch/t/array-of-histograms/13148/2
+                Double_t dPT_Q2 = 0.;
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
                     Double_t bin_content = 0., bin_err = 0.;
@@ -3891,44 +4875,82 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     CSerror[iMod][iW] = 0.;
                     Double_t ACorr = hr_ACq[iCharge][iQcanv]->GetBinContent(iW+1);
                     Double_t RCorr = hr_RCq[iCharge][iQcanv]->GetBinContent(iW+1);
-                    if(RCorr<=0. && bRAD==true){cout<<"Negative RC"<<endl; RCorr=1.;}
                     if(bAC == false){ACorr=1.;}
                     if(bRAD == false){RCorr=1.;}
-                    for(Int_t iPmom = 0; iPmom < Pbini+1; iPmom++)
+                    for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)//Removed +1 from Pbini+1
                     {
                         Int_t iPcanv = iPmom;//(Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
-                        for(Int_t iThPiQ = 0; iThPiQ < TPIQi+1; iThPiQ++)
+                        dPT_Q2 += dP[iPcanv] * DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
+                        if(bQorNot==false)
+                        {
+                          if(iCharge==0 && iPcanv < 3)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][TPIQi-1]);
+                          else if(iCharge==0)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][TPIQi-2]);
+                          else if(iCharge==1 && iPcanv==0)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][2],ThetaPi[iCharge][5]);
+                          else if(iCharge==1 && iPcanv==1)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][1],ThetaPi[iCharge][4]);
+                          else if(iCharge==1 && iPcanv==2)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][3]);
+                          else if(iCharge==1 && iPcanv==3)
+                            dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][2]);
+                          else
+                            dPT_Q2 = 1.;
+                        }
+                        for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)//Removed +1 from TPIQi+1
                         {
                             if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                bin_err += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
-                                bin_content += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW];
+                                bin_err += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
-                            else if(iMod>=iGENIEr)
+                            else if(iMod>=iGENIEr && ACorr<ACyMax)
                             {
                                 bin_content += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
                         }
                     }
+                    if(bin_content==0.)
+                    {
+                        ACorr=0.; RCorr=1.;
+                    }
+                    if(RCorr<=0. && bRAD==true && CSvalue[iDATA][iW]!=0.){
+                        //cout<<"Negative RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" w"<<iW<<endl;
+                        RCorr=1.;
+                    }
+                    if(RCorr==0.){
+                        cout<<"Negative RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" w"<<iW;
+                        RCorr=1.; bin_content = 0.;
+                        cout<<"\t RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" w"<<iW<<endl;
+                    }
                     if(iMod<iGENIEr && bin_err!=0)///Scale h_CS bins by total CS for onepigen
                     {
-                        h_CSq->SetBinContent(iW+1, bin_content * ACorr);
+                        h_CSq->SetBinContent(iW+1, bin_content);
                         h_CSq->SetBinError(iW+1, bin_err);
                     }
                     else if(iMod>=iGENIEr)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
                     {
-                        h_CSq->SetBinContent(iW+1, bin_content * ACorr / RCorr);
+                        if(iMod==iGEN){h_CSq->SetBinContent(iW+1, bin_content);}
+                        else{h_CSq->SetBinContent(iW+1, bin_content * ACorr / RCorr);}
                         h_CSq->SetBinError(iW+1, sqrt(bin_content));
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                bin_vol = dPT_Q2 * dQ2[iQcanv] * dW;
                 //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
                 if(iMod==iDATA)//Data
                 {
-                    h_CSq->Scale(cm2ub * ub2nb / (L * bin_vol));//kBlack
+                    h_CSq->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));//kBlack
                     //h_CSq->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                     line = 1; mark = 8;  size = 5; marc = 1; h_CSq->SetLineColor(1);
                 }
                 else if(iMod==iGENIE)//GENIE
+                {
+                    h_CSq->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
+                    //h_CS->Scale(pntF * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));
+                    line = 1; mark = 32; size = 5; marc = 2; h_CSq->SetLineColor(2);
+                }
+                else if(iMod==iGEN)//GENIE truth (GEN)
                 {
                     h_CSq->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
                     //h_CS->Scale(pntF * ub2nb / (MC_evts[iGENmod] * bin_vol));
@@ -3936,29 +4958,29 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 }
                 if(iMod==iGENIEr)//Data
                 {
-                    h_CSq->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_rad_evts[iGENmod] * bin_vol));
+                    h_CSq->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod] * bin_vol));
                     line = 1; mark = 32;  size = 5; marc = 6; h_CSq->SetLineColor(6);
                 }
                 else if(iMod==iOPGr && iCharge==0)//onepigen pi+
                 {
-                    h_CSq->Scale(ub2nb / (opg_gen_events[0] * bin_vol));//kBlue
+                    h_CSq->Scale(ub2nb * SecCorr / (opg_gen_events[0] * bin_vol));//kBlue
                     h_CSq->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                     line = 1; mark = 26; size = 4; marc = 4; h_CSq->SetLineColor(4);
                 }
                 else if(iMod==iOPGr && iCharge==1)//onepigen pi-
                 {
-                    h_CSq->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
+                    h_CSq->Scale(ub2nb * SecCorr / (opg_gen_events[1] * bin_vol));/// <-------------------<<
                     h_CSq->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                     line = 1; mark = 26; size = 4; marc = 4; h_CSq->SetLineColor(4);//38
                 }
                 else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
                 {
-                    h_CSq->Scale(ub2nb / (opg_gen_events[2] * bin_vol));//kBlue
+                    h_CSq->Scale(ub2nb * SecCorr / (opg_gen_events[2] * bin_vol));//kBlue
                     line = 1; mark = 26; size = 4; marc = 4; h_CSq->SetLineColor(4);//marc=3
                 }
                 else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
                 {
-                    h_CSq->Scale(ub2nb / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                    h_CSq->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                     line = 1; mark = 26; size = 4; marc = 4; h_CSq->SetLineColor(4);//38);
                 }
                 h_CSq->SetLineStyle(line);
@@ -3969,24 +4991,91 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 if(iMod==iDATA)
                 {
                     for(Int_t iW = 0; iW < Wbini; iW++)
-                    {
-                            Double_t error = pow(h_CSq->GetBinError(iW+1),2);       //statistical
-                            //error += var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];  //sector-by-sector uncertainty
-                            error += pow(b2b_error * h_CSq->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                    {   ///Retrieving point-to-point cut uncertainties
+                            Double_t dunc_pid = 0., dunc_Vze = 0., dunc_Vre = 0., dunc_Vrpi = 0., dunc_Vdiff = 0.;
+                            if(unc_pid_q2.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_pid_q2, iunc_bin);
+                                unc_pid_q2 >> dunc_pid; //if(iunc_bin<30){cout << dunc_pid << "\t";}
+                            }
+                            if(unc_Vze_q2.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vze_q2, iunc_bin);
+                                unc_Vze_q2 >> dunc_Vze; //if(iunc_bin<30){cout << dunc_Vze << endl;}
+                            }
+                            if(unc_Vre_q2.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vre_q2, iunc_bin);
+                                unc_Vre_q2 >> dunc_Vre;
+                            }
+                            if(unc_Vrpi_q2.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vrpi_q2, iunc_bin);
+                                unc_Vrpi_q2 >> dunc_Vrpi;
+                            }
+                            if(unc_Vdiff_q2.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vdiff_q2, iunc_bin);
+                                unc_Vdiff_q2 >> dunc_Vdiff;
+                            }
+                            iunc_bin++;
+                            Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
+                            Double_t err_s = pow(h_CSq->GetBinError(iW+1),2);       //statistical
+                            Double_t error = err_s;                                 //statistical
+                            error += varQ[iCharge][iQcanv][iW];  //sector-by-sector uncertainty
+                            //error += pow(b2b_error * h_CSq->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                            Double_t radunc = hr_RCq[iCharge][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                            Double_t accunc = hr_ACq[iCharge][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                            error += pow(radunc * h_CSq->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                            error += pow(accunc * h_CSq->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
+                            error += pow(u_eID * h_CSq->GetBinContent(iW+1),2); //eID uncertainty
+                            error += pow(dunc_pid * CSscale * h_CSq->GetBinContent(iW+1),2); //piID uncertainty
+                            error += pow(dunc_Vze * CSscale * h_CSq->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                            error += pow(dunc_Vre * CSscale * h_CSq->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                            error += pow(dunc_Vrpi * CSscale * h_CSq->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                            error += pow(dunc_Vdiff * CSscale * h_CSq->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                            error += pow(u_TW * h_CSq->GetBinContent(iW+1),2); //target uncertainty
+                            if(h_CSq->GetBinContent(iW+1)==0.){error=0.;}
                             h_CSq->SetBinError(iW+1, sqrt(error));
                             CSvalue[iMod][iW] = h_CSq->GetBinContent(iW+1);
                             CSerror[iMod][iW] = h_CSq->GetBinError(iW+1);
+
+                            //ofstream ErrtxtFile (c_NAME);/// Checking uncertainties at W = 2.0 GeV
+                            if(ErrtxtFile.is_open() && (iW==37 || iW==27 || iW==22))
+                            {
+                                ErrtxtFile<<endl<<"***********************************************\n";
+                                ErrtxtFile<<endl<<"C: "<<iCharge<<"  Q: "<<iQcanv<<"  P: all T: all W: "<<iW;
+                                ErrtxtFile<<endl<<"Statistical: "<< err_s;
+                                ErrtxtFile<<endl<<"Sec-by-Sec:  "<< varQ[iCharge][iQcanv][iW];
+                                ErrtxtFile<<endl<<"Radiative:   "<< pow(radunc * h_CSq->GetBinContent(iW+1),2);
+                                ErrtxtFile<<endl<<"Acceptance:  "<< pow(accunc * h_CSq->GetBinContent(iW+1),2);
+                                ErrtxtFile<<endl<<"Electron ID: "<< pow(u_eID * h_CSq->GetBinContent(iW+1),2); //eID uncertainty
+                                ErrtxtFile<<endl<<"Pion ID:     "<< pow(dunc_pid * CSscale * h_CSq->GetBinContent(iW+1),2); //piID uncertainty
+                                ErrtxtFile<<endl<<"e- Vertex Z: "<< pow(dunc_Vze * CSscale * h_CSq->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                ErrtxtFile<<endl<<"e- V_perp:   "<< pow(dunc_Vre * CSscale * h_CSq->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                ErrtxtFile<<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * CSscale * h_CSq->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                ErrtxtFile<<endl<<"Vdiff:       "<< pow(dunc_Vdiff * CSscale * h_CSq->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                ErrtxtFile<<endl<<"Target:      "<< pow(u_TW * h_CSq->GetBinContent(iW+1),2); //target uncertainty
+                                ErrtxtFile<<endl<<"Total Uncer: "<< error; //total uncertainty
+                                ErrtxtFile<<endl<<"***********************************************\n";
+                            }
+                            //ErrtxtFile.close();
                     }
                 }
                 else
                 {
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
+                        Double_t err_s = pow(h_CSq->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
+                        Double_t error = err_s;                                             //statistical
+                        //Double_t accunc = hr_ACq[iCharge][iQ2]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                        //error += pow(accunc * h_CSq->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                        h_CSq->SetBinError(iW+1, sqrt(error));
                         CSvalue[iMod][iW] = h_CSq->GetBinContent(iW+1);
                         CSerror[iMod][iW] = h_CSq->GetBinError(iW+1);
                     }
                 }
-                if(iMod==iDATA || iMod==iGENIE || iMod==iGENIEr || (iMod==iOPGn && bMultiPion==false))
+                if(iMod==iDATA || iMod==iGEN || (iMod==iOPGn && bMultiPion==false))
                     {
                         hs_CSq->Add(h_CSq);
                     }
@@ -4015,15 +5104,16 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
                     Double_t Wvalue  = CS_Wmin + 0.025*(Double_t(iW)+1.);
-                    CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGENIE][iW];
-                    CStxtFile << "," << CSerror[iGENIE][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
+                    CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGEN][iW];
+                    CStxtFile << "," << CSerror[iGEN][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
                 }
             }
             CStxtFile.close();
             hs_CSq->Draw("nostack,e1p");
             hs_CSq->GetYaxis()->SetLabelSize(label_size);//0.05 or label_size
-            hs_CSq->GetYaxis()->SetNdivisions(3);
-            hs_CSq->GetXaxis()->SetNdivisions(4);
+            hs_CSq->SetMinimum(0.0);
+            hs_CSq->GetYaxis()->SetNdivisions(iNYdiv);
+            hs_CSq->GetXaxis()->SetNdivisions(iNXdiv);
             hs_CSq->GetXaxis()->SetTitleOffset(1.5);
             hs_CSq->GetXaxis()->SetLabelSize(xlab_size);
             if(iQcanv==0)
@@ -4051,17 +5141,24 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
     }///End of cross sections
   //Print page to file
   c1->Clear();
+  unc_pid_q2.close(); unc_Vze_q2.close(); unc_Vre_q2.close(); unc_Vrpi_q2.close(); unc_Vdiff_q2.close(); ///close files
   /// -------------------------------------------------P_PI------------------------------------------ ///
   //CStxtFile << "*******************************************************************************************" << endl;
   //CStxtFile << "3D binning: Q2 and P_pi" << endl;
   //CStxtFile << "*******************************************************************************************" << endl;
   //CStxtFile << "iMod\t iChrg\t iQ2\t iPcanv\t W\t CS\t error" << endl;
+  ifstream unc_pid_p("3Dp_delta_"+ver+"_unc_pid.txt");
+  ifstream unc_Vze_p("3Dp_delta_"+ver+"_unc_vze.txt");
+  ifstream unc_Vre_p("3Dp_delta_"+ver+"_unc_vpe.txt");
+  ifstream unc_Vrpi_p("3Dp_delta_"+ver+"_unc_vppi.txt");
+  ifstream unc_Vdiff_p("3Dp_delta_"+ver+"_unc_vdiff.txt");
+  iunc_bin = 0;
   c1->Divide(Pbini,Q2bini);
     line = 1, size = 3, marc = 2, mark_d = 8;
     //label_size = 0.11;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// cross sections
     {
-        Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2)+pow(RadFitUnc[iCharge],2));
+        Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2));
         canvas = 1;
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
         {
@@ -4070,11 +5167,26 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
             {
                 Int_t iPcanv = iPmom;//(Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
                 Double_t dPmom = dP[iPcanv];
+                dT = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
                 Double_t CSvalue[models][Wbini];
                 Double_t CSerror[models][Wbini];
                 if(bQorNot==false)
                 {
-                    dPmom = dPt[iCharge][iPmom+1] - dPt[iCharge][iPmom];
+                    dPmom = dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv];
+                    if(iCharge==0 && iPcanv < 3)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][TPIQi-1]);
+                    else if(iCharge==0)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][TPIQi-2]);
+                    else if(iCharge==1 && iPcanv==0)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][2],ThetaPi[iCharge][5]);
+                    else if(iCharge==1 && iPcanv==1)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][1],ThetaPi[iCharge][4]);
+                    else if(iCharge==1 && iPcanv==2)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][3]);
+                    else if(iCharge==1 && iPcanv==3)
+                        dT = DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][2]);
+                    else
+                        dT = 1.;
                 }
                 bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
@@ -4094,70 +5206,88 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         CSerror[iMod][iW] = 0.;
                         Double_t ACorr = hr_ACp[iPcanv][iCharge][iQcanv]->GetBinContent(iW+1);
                         Double_t RCorr = hr_RCp[iPcanv][iCharge][iQcanv]->GetBinContent(iW+1);
-                        if(RCorr<=0. && bRAD==true){cout<<"Negative RC"<<endl; RCorr=1.;}
                         if(bAC == false){ACorr=1.;}
                         if(bRAD == false){RCorr=1.;}
-                        for(Int_t iThPiQ = 0; iThPiQ < TPIQi+1; iThPiQ++)
+                        for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
                         {
                             if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                bin_err += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
-                                bin_content += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW];
+                                bin_err += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
-                            else if(iMod>=iGENIEr)
+                            else if(iMod>=iGENIEr && ACorr<ACyMax)
                             {
                                 bin_content += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
                         }
+                        if(bin_content==0.)
+                        {
+                            ACorr=0.; RCorr=1.;
+                        }
+                        if(RCorr<=0. && bRAD==true && CSvalue[iDATA][iW]!=0.){
+                            //cout<<"Negative RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" p"<<iPmom<<" w"<<iW<<endl;
+                            RCorr=1.;
+                        }
+                        if(RCorr==0.){
+                            //cout<<"Zero RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" w"<<iW<<endl;
+                            RCorr=1.; bin_content=0.;
+                        }
                         if(iMod<iGENIEr && bin_err!=0)///Scale h_CS bins by total CS for onepigen
                         {
-                            h_CSp->SetBinContent(iW+1, bin_content * ACorr);
+                            h_CSp->SetBinContent(iW+1, bin_content);// * ACorr);
                             h_CSp->SetBinError(iW+1, bin_err);
                         }
                         else if(iMod>=iGENIEr)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
                         {
-                            h_CSp->SetBinContent(iW+1, bin_content * ACorr / RCorr);
+                            if(iMod==iGEN){h_CSp->SetBinContent(iW+1, bin_content);}
+                            else{h_CSp->SetBinContent(iW+1, bin_content * ACorr / RCorr);}
                             h_CSp->SetBinError(iW+1, sqrt(bin_content));
                         }
                     }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                     //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
                     if(iMod==iDATA)//Data
                     {
-                        h_CSp->Scale(cm2ub * ub2nb / (L * bin_vol));//kBlack
+                        h_CSp->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));//kBlack
                         //h_CSp->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 8;  size = 5; marc = 1; h_CSp->SetLineColor(1);
                     }
                     else if(iMod==iGENIE)//GENIE
                     {
+                        h_CSp->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
+                        //h_CS->Scale(pntF * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));
+                        line = 1; mark = 32; size = 5; marc = 2; h_CSp->SetLineColor(2);
+                    }
+                    else if(iMod==iGEN)//GENIE truth (GEN)
+                    {
                         h_CSp->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
                         //h_CS->Scale(pntF * ub2nb / (MC_evts[iGENmod] * bin_vol));
                         line = 1; mark = 32; size = 5; marc = 2; h_CSp->SetLineColor(2);
                     }
-                    if(iMod==iGENIEr)//Data
+                    if(iMod==iGENIEr)//GENIE radiative
                     {
-                        h_CSp->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_rad_evts[iGENmod] * bin_vol));
+                        h_CSp->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod] * bin_vol));
                         line = 1; mark = 32;  size = 5; marc = 6; h_CSp->SetLineColor(6);
                     }
                     else if(iMod==iOPGr && iCharge==0)//onepigen pi+
                     {
-                        h_CSp->Scale(ub2nb / (opg_gen_events[0] * bin_vol));//kBlue
+                        h_CSp->Scale(ub2nb * SecCorr / (opg_gen_events[0] * bin_vol));//kBlue
                         //h_CSp->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 26; size = 4; marc = 4; h_CSp->SetLineColor(4);
                     }
                     else if(iMod==iOPGr && iCharge==1)//onepigen pi-
                     {
-                        h_CSp->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
+                        h_CSp->Scale(ub2nb * SecCorr / (opg_gen_events[1] * bin_vol));/// <-------------------<<
                         h_CSp->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 26; size = 4; marc = 4; h_CSp->SetLineColor(4);//38
                     }
                     else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
                     {
-                        h_CSp->Scale(ub2nb / (opg_gen_events[2] * bin_vol));//kBlue
+                        h_CSp->Scale(ub2nb * SecCorr / (opg_gen_events[2] * bin_vol));//kBlue
                         line = 1; mark = 26; size = 4; marc = 4; h_CSp->SetLineColor(4);//marc=3
                     }
                     else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
                     {
-                        h_CSp->Scale(ub2nb / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                        h_CSp->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                         line = 1; mark = 26; size = 4; marc = 4; h_CSp->SetLineColor(4);//38);
                     }
                     h_CSp->SetLineStyle(line);
@@ -4168,24 +5298,90 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     if(iMod==iDATA)
                     {
                         for(Int_t iW = 0; iW < Wbini; iW++)
-                        {
-                                Double_t error = pow(h_CSp->GetBinError(iW+1),2);       //statistical
-                                //error += var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];  //sector-by-sector uncertainty
-                                error += pow(b2b_error * h_CSp->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                        {   ///Retrieving point-to-point cut uncertainties
+                                Double_t dunc_pid = 0., dunc_Vze = 0., dunc_Vre = 0., dunc_Vrpi = 0., dunc_Vdiff = 0.;
+                                if(unc_pid_p.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_pid_p, iunc_bin);
+                                    unc_pid_p >> dunc_pid; //if(iunc_bin<30){cout << dunc_pid << "\t";}
+                                }
+                                if(unc_Vze_p.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vze_p, iunc_bin);
+                                    unc_Vze_p >> dunc_Vze; //if(iunc_bin<30){cout << dunc_Vze << endl;}
+                                }
+                                if(unc_Vre_p.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vre_p, iunc_bin);
+                                    unc_Vre_p >> dunc_Vre;
+                                }
+                                if(unc_Vrpi_p.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vrpi_p, iunc_bin);
+                                    unc_Vrpi_p >> dunc_Vrpi;
+                                }
+                                if(unc_Vdiff_p.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vdiff_p, iunc_bin);
+                                    unc_Vdiff_p >> dunc_Vdiff;
+                                }
+                                iunc_bin++;
+                                Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
+                                Double_t err_s = pow(h_CSp->GetBinError(iW+1),2);       //statistical
+                                Double_t error = err_s;                                 //statistical
+                                error += varP[iPcanv][iCharge][iQcanv][iW];  //sector-by-sector uncertainty
+                                //error += pow(b2b_error * h_CSp->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                                Double_t radunc = hr_RCp[iPcanv][iCharge][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                                Double_t accunc = hr_ACp[iPcanv][iCharge][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                                error += pow(radunc * h_CSp->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                                error += pow(accunc * h_CSp->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
+                                error += pow(u_eID * h_CSp->GetBinContent(iW+1),2); //eID uncertainty
+                                error += pow(dunc_pid * CSscale * h_CSp->GetBinContent(iW+1),2); //piID uncertainty
+                                error += pow(dunc_Vze * CSscale * h_CSp->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                error += pow(dunc_Vre * CSscale * h_CSp->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                error += pow(dunc_Vrpi * CSscale * h_CSp->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                error += pow(dunc_Vdiff * CSscale * h_CSp->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                error += pow(u_TW * h_CSp->GetBinContent(iW+1),2); //target uncertainty
+                                if(h_CSp->GetBinContent(iW+1)==0.){error=0.;}
                                 h_CSp->SetBinError(iW+1, sqrt(error));
                                 CSvalue[iMod][iW] = h_CSp->GetBinContent(iW+1);
                                 CSerror[iMod][iW] = h_CSp->GetBinError(iW+1);
+                                //ofstream ErrtxtFile (c_NAME);/// Checking uncertainties at W = 2.0 GeV
+                                if(ErrtxtFile.is_open() && iQcanv==0 && iPmom==0 && (iW==37 || iW==27 || iW==22))
+                                {
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                    ErrtxtFile<<endl<<"C: "<<iCharge<<"  Q: "<<iQcanv<<"  P: "<<iPcanv<<"   T: all W: "<<iW;
+                                    ErrtxtFile<<endl<<"Statistical: "<< err_s;
+                                    ErrtxtFile<<endl<<"Sec-by-Sec:  "<< varP[iPcanv][iCharge][iQcanv][iW];
+                                    ErrtxtFile<<endl<<"Radiative:   "<< pow(radunc * h_CSp->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Acceptance:  "<< pow(accunc * h_CSp->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Electron ID: "<< pow(u_eID * h_CSp->GetBinContent(iW+1),2); //eID uncertainty
+                                    ErrtxtFile<<endl<<"Pion ID:     "<< pow(dunc_pid * CSscale * h_CSp->GetBinContent(iW+1),2); //piID uncertainty
+                                    ErrtxtFile<<endl<<"e- Vertex Z: "<< pow(dunc_Vze * CSscale * h_CSp->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                    ErrtxtFile<<endl<<"e- V_perp:   "<< pow(dunc_Vre * CSscale * h_CSp->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * CSscale * h_CSp->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"Vdiff:       "<< pow(dunc_Vdiff * CSscale * h_CSp->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                    ErrtxtFile<<endl<<"Target:      "<< pow(u_TW * h_CSp->GetBinContent(iW+1),2); //target uncertainty
+                                    ErrtxtFile<<endl<<"Total Uncer: "<< error; //total uncertainty
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                }
+                                //ErrtxtFile.close();
                         }
                     }
                     else
                     {
                         for(Int_t iW = 0; iW < Wbini; iW++)
                         {
+                            Double_t err_s = pow(h_CSp->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
+                            Double_t error = err_s;                                             //statistical
+                            //Double_t accunc = hr_ACp[iPcanv][iCharge][iQ2]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                            //error += pow(accunc * h_CSp->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                            h_CSp->SetBinError(iW+1, sqrt(error));
                             CSvalue[iMod][iW] = h_CSp->GetBinContent(iW+1);
                             CSerror[iMod][iW] = h_CSp->GetBinError(iW+1);
                         }
                     }
-                    if(iMod==iDATA || iMod==iGENIE || iMod==iGENIEr || (iMod==iOPGn && bMultiPion==false))
+                    if(iMod==iDATA || iMod==iGEN || (iMod==iOPGn && bMultiPion==false))
                         {
                             hs_CSp->Add(h_CSp);
                         }
@@ -4214,15 +5410,16 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
                         Double_t Wvalue  = CS_Wmin + 0.025*(Double_t(iW)+1.);
-                        CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGENIE][iW];
-                        CStxtFile << "," << CSerror[iGENIE][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
+                        CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGEN][iW];
+                        CStxtFile << "," << CSerror[iGEN][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
                     }
                 }
                 CStxtFile.close();
                 hs_CSp->Draw("nostack,e1p");
                 hs_CSp->GetYaxis()->SetLabelSize(label_size);//0.05 or label_size
-                hs_CSp->GetYaxis()->SetNdivisions(3);
-                hs_CSp->GetXaxis()->SetNdivisions(4);
+                hs_CSp->SetMinimum(0.0);
+                hs_CSp->GetYaxis()->SetNdivisions(iNYdiv);
+                hs_CSp->GetXaxis()->SetNdivisions(iNXdiv);
                 hs_CSp->GetXaxis()->SetTitleOffset(1.5);
                 hs_CSp->GetXaxis()->SetLabelSize(xlab_size);
                 if(iPcanv == Pbini - 1 && iQcanv==0)
@@ -4251,18 +5448,25 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
     }///End of cross sections
   //Print page to file
   c1->Clear();
+  unc_pid_p.close(); unc_Vze_p.close(); unc_Vre_p.close(); unc_Vrpi_p.close(); unc_Vdiff_p.close(); ///close files
   /// -------------------------------------------------THETA_PIQ------------------------------------------ ///
   //CStxtFile << "*******************************************************************************************" << endl;
   //if(bQorNot==true){CStxtFile << "3D binning: Q2 and Theta_piq" << endl;}
   //else             {CStxtFile << "3D binning: Q2 and Theta_pi" << endl;}
   //CStxtFile << "*******************************************************************************************" << endl;
   //CStxtFile << "iMod\t iChrg\t iQ2\t iTheta\t W\t CS\t error" << endl;
+  ifstream unc_pid_t("3Dt_delta_"+ver+"_unc_pid.txt");
+  ifstream unc_Vze_t("3Dt_delta_"+ver+"_unc_vze.txt");
+  ifstream unc_Vre_t("3Dt_delta_"+ver+"_unc_vpe.txt");
+  ifstream unc_Vrpi_t("3Dt_delta_"+ver+"_unc_vppi.txt");
+  ifstream unc_Vdiff_t("3Dt_delta_"+ver+"_unc_vdiff.txt");
+  iunc_bin = 0;
   c1->Divide(TPIQi,Q2bini);
     line = 1, size = 3, marc = 2, mark_d = 8;
     //label_size = 0.11;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// cross sections
     {
-        Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2)+pow(RadFitUnc[iCharge],2));
+        Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2));
         canvas = 1;
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
         {
@@ -4272,11 +5476,34 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                 Double_t CSvalue[models][Wbini];
                 Double_t CSerror[models][Wbini];
                 dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                Double_t dPmom = 0.;
+                if(Pbini-iThPiQ>0)
+                {
+                    for(Int_t iPmoth = 0; iPmoth < Pbini-iThPiQ; iPmoth++)
+                    {
+                        dPmom += dP[iPmoth];
+                    }
+                }
+                else{dPmom = 1.;}
                 if(bQorNot==false)
                 {
                     dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
+                    if(iCharge==0 && iThPiQ < 3)
+                        dPmom = dPt[iCharge][Pbini-1] - dPt[iCharge][0];
+                    else if(iCharge==0)
+                        dPmom = dPt[iCharge][Pbini-2] - dPt[iCharge][0];
+                    else if(iCharge==1 && iThPiQ==0)
+                        dPmom = dPt[iCharge][4] - dPt[iCharge][2] + dPt[iCharge][1] - dPt[iCharge][0];
+                    else if(iCharge==1 && iThPiQ==1)
+                        dPmom = dPt[iCharge][4] - dPt[iCharge][1];
+                    else if(iCharge==1 && iThPiQ==2)
+                        dPmom = dPt[iCharge][3] - dPt[iCharge][0];
+                    else if(iCharge==1 && iThPiQ==3)
+                        dPmom = dPt[iCharge][2] - dPt[iCharge][0];
+                    else
+                        dPmom = 1.;
                 }
-                bin_vol = dT * dQ2[iQcanv] * dW;
+                bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
                 sprintf(c_NAME,"hs_CSt%d%d%d",iThPiQ,iCharge,iQcanv);
                 THStack * hs_CSt = new THStack(c_NAME,"");
@@ -4294,41 +5521,59 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                         CSerror[iMod][iW] = 0.;
                         Double_t ACorr = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
                         Double_t RCorr = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
-                        if(RCorr<=0. && bRAD==true){cout<<"Negative RC"<<endl; RCorr=1.;}
                         if(bAC == false){ACorr=1.;}
                         if(bRAD == false){RCorr=1.;}
-                        for(Int_t iPmom = 0; iPmom < Pbini+1; iPmom++)
+                        for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)// removed +1
                         {
                             Int_t iPcanv = iPmom;
                             if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                bin_err += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
-                                bin_content += tCS[iPcanv][iThPiQ][iCharge][0][iMod][iQcanv][iW];
+                                bin_err += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
-                            else if(iMod>=iGENIEr)
+                            else if(iMod>=iGENIEr && ACorr<ACyMax)
                             {
                                 bin_content += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
                             }
                         }
+                        if(bin_content==0.)
+                        {
+                            ACorr=0.; RCorr=1.;
+                        }
+                        if(RCorr<=0. && bRAD==true && CSvalue[iDATA][iW]!=0.){
+                            //cout<<"Negative RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" t"<<iThPiQ<<" w"<<iW<<endl;
+                            RCorr=1.;
+                        }
+                        if(RCorr==0.){
+                            //cout<<"Zero RC "<<RCorr<<" c"<<iCharge<<" q"<<iQ2<<" w"<<iW<<endl;
+                            RCorr=1.; bin_content=0.;
+                        }
                         if(iMod<iGENIEr && bin_err!=0)///Scale h_CS bins by total CS for onepigen
                         {
-                            h_CSt->SetBinContent(iW+1, bin_content * ACorr);
+                            h_CSt->SetBinContent(iW+1, bin_content);// * ACorr);
                             h_CSt->SetBinError(iW+1, bin_err);
                         }
                         else if(iMod>=iGENIEr)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
                         {
-                            h_CSt->SetBinContent(iW+1, bin_content * ACorr / RCorr);
+                            if(iMod==iGEN){h_CSt->SetBinContent(iW+1, bin_content);}
+                            else{h_CSt->SetBinContent(iW+1, bin_content * ACorr / RCorr);}
                             h_CSt->SetBinError(iW+1, sqrt(bin_content));
                         }
                     }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
                     //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
                     if(iMod==iDATA)//Data
                     {
-                        h_CSt->Scale(cm2ub * ub2nb / (L * bin_vol));//kBlack
+                        h_CSt->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));//kBlack
                         //h_CSt->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 8;  size = 5; marc = 1; h_CSt->SetLineColor(1);
                     }
                     else if(iMod==iGENIE)//GENIE
+                    {
+                        h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));//kRed
+                        //h_CS->Scale(pntF * ub2nb * SecCorr / (MC_evts[iGENmod] * bin_vol));
+                        line = 1; mark = 32; size = 5; marc = 2; h_CSt->SetLineColor(2);
+                    }
+                    else if(iMod==iGEN)//GENIE truth (GEN)
                     {
                         h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
                         //h_CS->Scale(pntF * ub2nb / (MC_evts[iGENmod] * bin_vol));
@@ -4336,29 +5581,29 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     }
                     if(iMod==iGENIEr)//Data
                     {
-                        h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_rad_evts[iGENmod] * bin_vol));
+                        h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb * SecCorr / (MC_rad_evts[iGENmod] * bin_vol));
                         line = 1; mark = 32;  size = 5; marc = 6; h_CSt->SetLineColor(6);
                     }
                     else if(iMod==iOPGr && iCharge==0)//onepigen pi+
                     {
-                        h_CSt->Scale(ub2nb / (opg_gen_events[0] * bin_vol));//kBlue
+                        h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[0] * bin_vol));//kBlue
                         h_CSt->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);
                     }
                     else if(iMod==iOPGr && iCharge==1)//onepigen pi-
                     {
-                        h_CSt->Scale(ub2nb / (opg_gen_events[1] * bin_vol));/// <-------------------<<
+                        h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[1] * bin_vol));/// <-------------------<<
                         h_CSt->Scale(1. / RadFitAve[iCharge]);/// Radiative corrections
                         line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);//38
                     }
                     else if(iMod==iOPGn && iCharge==0)//onepigen pi+ norad
                     {
-                        h_CSt->Scale(ub2nb / (opg_gen_events[2] * bin_vol));//kBlue
+                        h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[2] * bin_vol));//kBlue
                         line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);//marc=3
                     }
                     else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
                     {
-                        h_CSt->Scale(ub2nb / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                        h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                         line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);//38);
                     }
                     h_CSt->SetLineStyle(line);
@@ -4369,24 +5614,89 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     if(iMod==iDATA)
                     {
                         for(Int_t iW = 0; iW < Wbini; iW++)
-                        {
-                                Double_t error = pow(h_CSt->GetBinError(iW+1),2);       //statistical
-                                //error += var[iPcanv][iThPiQ][iCharge][iMod][iQ2][iW];  //sector-by-sector uncertainty
-                                error += pow(b2b_error * h_CSt->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                        {   ///Retrieving point-to-point cut uncertainties
+                                Double_t dunc_pid = 0., dunc_Vze = 0., dunc_Vre = 0., dunc_Vrpi = 0., dunc_Vdiff = 0.;
+                                if(unc_pid_t.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_pid_t, iunc_bin);
+                                    unc_pid_t >> dunc_pid; //if(iunc_bin<30){cout << dunc_pid << "\t";}
+                                }
+                                if(unc_Vze_t.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vze_t, iunc_bin);
+                                    unc_Vze_t >> dunc_Vze; //if(iunc_bin<30){cout << dunc_Vze << endl;}
+                                }
+                                if(unc_Vre_t.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vre_t, iunc_bin);
+                                    unc_Vre_t >> dunc_Vre;
+                                }
+                                if(unc_Vrpi_t.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vrpi_t, iunc_bin);
+                                    unc_Vrpi_t >> dunc_Vrpi;
+                                }
+                                if(unc_Vdiff_t.is_open())///For cut uncertainty
+                                {
+                                    GotoLine(unc_Vdiff_t, iunc_bin);
+                                    unc_Vdiff_t >> dunc_Vdiff;
+                                }
+                                iunc_bin++;
+                                Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
+                                Double_t err_s = pow(h_CSt->GetBinError(iW+1),2);       //statistical
+                                Double_t error = err_s;                                 //statistical
+                                error += varT[iThPiQ][iCharge][iQcanv][iW];  //sector-by-sector uncertainty
+                                //error += pow(b2b_error * h_CSt->GetBinContent(iW+1),2); //bin-to-bin correction uncertainty
+                                Double_t radunc = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                                Double_t accunc = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                                error += pow(radunc * h_CSt->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                                error += pow(accunc * h_CSt->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
+                                error += pow(u_eID * h_CSt->GetBinContent(iW+1),2); //eID uncertainty
+                                error += pow(dunc_pid * CSscale * h_CSt->GetBinContent(iW+1),2); //piID uncertainty
+                                error += pow(dunc_Vze * CSscale * h_CSt->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                error += pow(dunc_Vre * CSscale * h_CSt->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                error += pow(dunc_Vrpi * CSscale * h_CSt->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                error += pow(dunc_Vdiff * CSscale * h_CSt->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                error += pow(u_TW * h_CSt->GetBinContent(iW+1),2); //target uncertainty
+                                if(h_CSt->GetBinContent(iW+1)==0.){error=0.;}
                                 h_CSt->SetBinError(iW+1, sqrt(error));
                                 CSvalue[iMod][iW] = h_CSt->GetBinContent(iW+1);
                                 CSerror[iMod][iW] = h_CSt->GetBinError(iW+1);
+                                //ofstream ErrtxtFile (c_NAME);/// Checking uncertainties at W = 2.0 GeV
+                                if(ErrtxtFile.is_open() && iQcanv==0 && iThPiQ==0 && (iW==37 || iW==27 || iW==22))
+                                {
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                    ErrtxtFile<<endl<<"C: "<<iCharge<<"  Q: "<<iQcanv<<"  P: all T: "<<iThPiQ<<"   W: "<<iW;
+                                    ErrtxtFile<<endl<<"Statistical: "<< err_s;
+                                    ErrtxtFile<<endl<<"Sec-by-Sec:  "<< varT[iThPiQ][iCharge][iQcanv][iW];
+                                    ErrtxtFile<<endl<<"Radiative:   "<< pow(radunc * h_CSt->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Acceptance:  "<< pow(accunc * h_CSt->GetBinContent(iW+1),2);
+                                    ErrtxtFile<<endl<<"Electron ID: "<< pow(u_eID * h_CSt->GetBinContent(iW+1),2); //eID uncertainty
+                                    ErrtxtFile<<endl<<"Pion ID:     "<< pow(dunc_pid * CSscale * h_CSt->GetBinContent(iW+1),2); //piID uncertainty
+                                    ErrtxtFile<<endl<<"e- Vertex Z: "<< pow(dunc_Vze * CSscale * h_CSt->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                                    ErrtxtFile<<endl<<"e- V_perp:   "<< pow(dunc_Vre * CSscale * h_CSt->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"pi V_perp:   "<< pow(dunc_Vrpi * CSscale * h_CSt->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                                    ErrtxtFile<<endl<<"Vdiff:       "<< pow(dunc_Vdiff * CSscale * h_CSt->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                                    ErrtxtFile<<endl<<"Target:      "<< pow(u_TW * h_CSt->GetBinContent(iW+1),2); //target uncertainty
+                                    ErrtxtFile<<endl<<"Total Uncer: "<< error; //total uncertainty
+                                    ErrtxtFile<<endl<<"***********************************************\n";
+                                }
                         }
                     }
                     else
                     {
                         for(Int_t iW = 0; iW < Wbini; iW++)
                         {
+                            Double_t err_s = pow(h_CSt->GetBinError(iW+1),2);                    //statistical [originally h_CSerr]
+                            Double_t error = err_s;                                             //statistical
+                            //Double_t accunc = hr_ACt[iThPiQ][iCharge][iQ2]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                            //error += pow(accunc * h_CSt->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                            h_CSt->SetBinError(iW+1, sqrt(error));
                             CSvalue[iMod][iW] = h_CSt->GetBinContent(iW+1);
                             CSerror[iMod][iW] = h_CSt->GetBinError(iW+1);
                         }
                     }
-                    if(iMod==iDATA || iMod==iGENIE || iMod==iGENIEr || (iMod==iOPGn && bMultiPion==false))
+                    if(iMod==iDATA || iMod==iGEN || (iMod==iOPGn && bMultiPion==false))
                         {
                             hs_CSt->Add(h_CSt);
                         }
@@ -4415,15 +5725,16 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
                     for(Int_t iW = 0; iW < Wbini; iW++)
                     {
                         Double_t Wvalue  = CS_Wmin + 0.025*(Double_t(iW)+1.);
-                        CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGENIE][iW];
-                        CStxtFile << "," << CSerror[iGENIE][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
+                        CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGEN][iW];
+                        CStxtFile << "," << CSerror[iGEN][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
                     }
                 }
                 CStxtFile.close();
                 hs_CSt->Draw("nostack,e1p");
                 hs_CSt->GetYaxis()->SetLabelSize(label_size);//0.05 or label_size
-                hs_CSt->GetYaxis()->SetNdivisions(3);
-                hs_CSt->GetXaxis()->SetNdivisions(4);
+                hs_CSt->SetMinimum(0.0);
+                hs_CSt->GetYaxis()->SetNdivisions(iNYdiv);
+                hs_CSt->GetXaxis()->SetNdivisions(iNXdiv);
                 hs_CSt->GetXaxis()->SetTitleOffset(1.5);
                 hs_CSt->GetXaxis()->SetLabelSize(xlab_size);
                 if(iQcanv==0)
@@ -4452,7 +5763,233 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
     }///End of cross sections
   //Print page to file
   c1->Clear();
+  if(bQorNot==false){/// ThetaPi- 3D CS Plots
+    c1->Divide(TPIQi+1,Q2bini);
+    line = 1, size = 3, marc = 2, mark_d = 8;
+    canvas = 1;
+    for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
+    {
+        Int_t iQcanv = (Q2bini - 1) - iQ2;//Needed to get plot positions correct for Q2
+        for(Int_t iThPiQ = 0; iThPiQ < TPIQi+1; iThPiQ++)
+        {
+            Double_t CSvalue[models][Wbini];
+            Double_t CSerror[models][Wbini];
+            Double_t dPmom = 0.;
+            dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
+            if(iThPiQ==0)
+                dPmom = dPt[iCharge][4] - dPt[iCharge][2];
+            else if(iThPiQ==1)
+                dPmom = dPt[iCharge][4] - dPt[iCharge][1];
+            else if(iThPiQ==2)
+                dPmom = dPt[iCharge][3] - dPt[iCharge][0];
+            else if(iThPiQ==3)
+                dPmom = dPt[iCharge][2] - dPt[iCharge][0];
+            else
+                dPmom = dPt[iCharge][1] - dPt[iCharge][0];
+            bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
+            c1->cd(canvas); canvas++; //Needed to get plot positions correct
+            sprintf(c_NAME,"hs_CSt%d%d%d",iThPiQ,iCharge,iQcanv);
+            THStack * hs_CSt = new THStack(c_NAME,"");
+            //gPad->SetLogy();
+            for(Int_t iMod = 0; iMod < models; iMod++)
+            {
+                //if(iMod==iGENIE) continue;
+                sprintf(c_NAME,"h_CSt%d%d%d%d",iThPiQ,iCharge,iQcanv,iMod);
+                TH1D * h_CSt = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
+                h_CSt->Sumw2(); //https://root-forum.cern.ch/t/array-of-histograms/13148/2
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    Double_t bin_content = 0., bin_err = 0.;
+                    CSvalue[iMod][iW] = 0.;
+                    CSerror[iMod][iW] = 0.;
+                    Double_t ACorr = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
+                    Double_t RCorr = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
+                    if(bAC == false){ACorr=1.;}
+                    if(bRAD == false){RCorr=1.;}
+                    for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)// removed +1
+                    {
+                        Int_t iPcanv = iPmom;
+                        if(iThPiQ==0 && iPmom==0) continue;
+                        else if(iThPiQ==TPIQi && iPmom==0)
+                        {
+                            if(iMod<iGENIEr && y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
+                            {
+                                bin_err += tCS[iPcanv][0][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][0][iCharge][iMod][iQcanv][iW];
+                            }
+                            else if(iMod>=iGENIEr && ACorr<ACyMax)
+                            {
+                                bin_content += y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW];
+                            }
+                        }
+                        else if(iThPiQ==TPIQi && iPmom!=0) continue;
+                        else
+                        {
+                            if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
+                            {
+                                bin_err += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
+                            }
+                            else if(iMod>=iGENIEr && ACorr<ACyMax)
+                            {
+                                bin_content += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
+                            }
+                        }
+                    }
+                    if(bin_content==0.){ACorr=0.; RCorr=1.;}
+                    if(RCorr<=0. && bRAD==true && CSvalue[iDATA][iW]!=0.){RCorr=1.;}
+                    if(RCorr==0.){RCorr=1.; bin_content=0.;}
+                    if(iMod<iGENIEr && bin_err!=0)///Scale h_CS bins by total CS for onepigen
+                    {
+                        h_CSt->SetBinContent(iW+1, bin_content);// * ACorr);
+                        h_CSt->SetBinError(iW+1, bin_err);
+                    }
+                    else if(iMod>=iGENIEr)///Do not scale h_CS bins by total CS for non-onepigen (or bins have zero events)
+                    {
+                        if(iMod==iGEN){h_CSt->SetBinContent(iW+1, bin_content);}
+                        else{h_CSt->SetBinContent(iW+1, bin_content * ACorr / RCorr);}
+                        h_CSt->SetBinError(iW+1, sqrt(bin_content));
+                    }
+                }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
+                //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
+                if(iMod==iDATA)//Data
+                {
+                    h_CSt->Scale(cm2ub * ub2nb * SecCorr / (L * bin_vol));//kBlack
+                    line = 1; mark = 8;  size = 5; marc = 1; h_CSt->SetLineColor(1);
+                }
+                else if(iMod==iGEN)//GENIE truth (GEN)
+                {
+                    h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
+                    line = 1; mark = 32; size = 5; marc = 2; h_CSt->SetLineColor(2);
+                }
+                else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
+                {
+                    h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
+                    line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);//38);
+                }
+                h_CSt->SetLineStyle(line);
+                h_CSt->SetMarkerStyle(mark);
+                h_CSt->SetMarkerSize(2);//0.5 or size
+                h_CSt->SetMarkerColor(marc);
+                gStyle->SetEndErrorSize(10);
+                if(iMod==iDATA)
+                {
+                    for(Int_t iW = 0; iW < Wbini; iW++)
+                    {   ///Retrieving point-to-point cut uncertainties
+                            Double_t dunc_pid = 0., dunc_Vze = 0., dunc_Vre = 0., dunc_Vrpi = 0., dunc_Vdiff = 0.;
+                            if(unc_pid_t.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_pid_t, iunc_bin);
+                                unc_pid_t >> dunc_pid; //if(iunc_bin<30){cout << dunc_pid << "\t";}
+                            }
+                            if(unc_Vze_t.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vze_t, iunc_bin);
+                                unc_Vze_t >> dunc_Vze; //if(iunc_bin<30){cout << dunc_Vze << endl;}
+                            }
+                            if(unc_Vre_t.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vre_t, iunc_bin);
+                                unc_Vre_t >> dunc_Vre;
+                            }
+                            if(unc_Vrpi_t.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vrpi_t, iunc_bin);
+                                unc_Vrpi_t >> dunc_Vrpi;
+                            }
+                            if(unc_Vdiff_t.is_open())///For cut uncertainty
+                            {
+                                GotoLine(unc_Vdiff_t, iunc_bin);
+                                unc_Vdiff_t >> dunc_Vdiff;
+                            }
+                            iunc_bin++;
+                            Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
+                            Double_t err_s = pow(h_CSt->GetBinError(iW+1),2);       //statistical
+                            Double_t error = err_s;                                 //statistical
+                            error += varT[iThPiQ][iCharge][iQcanv][iW];  //sector-by-sector uncertainty
+                            Double_t radunc = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                            Double_t accunc = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                            error += pow(radunc * h_CSt->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
+                            error += pow(accunc * h_CSt->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
+                            error += pow(u_eID * h_CSt->GetBinContent(iW+1),2); //eID uncertainty
+                            error += pow(dunc_pid * CSscale * h_CSt->GetBinContent(iW+1),2); //piID uncertainty
+                            error += pow(dunc_Vze * CSscale * h_CSt->GetBinContent(iW+1),2); //e- Vertex Z uncertainty
+                            error += pow(dunc_Vre * CSscale * h_CSt->GetBinContent(iW+1),2); //e- perpendicular vertex uncertainty
+                            error += pow(dunc_Vrpi * CSscale * h_CSt->GetBinContent(iW+1),2); //pi perpendicular vertex uncertainty
+                            error += pow(dunc_Vdiff * CSscale * h_CSt->GetBinContent(iW+1),2); //vertex z difference uncertainty
+                            error += pow(u_TW * h_CSt->GetBinContent(iW+1),2); //target uncertainty
+                            if(h_CSt->GetBinContent(iW+1)==0.){error=0.;}
+                            h_CSt->SetBinError(iW+1, sqrt(error));
+                            CSvalue[iMod][iW] = h_CSt->GetBinContent(iW+1);
+                            CSerror[iMod][iW] = h_CSt->GetBinError(iW+1);
+                    }
+                }
+                else
+                {
+                    for(Int_t iW = 0; iW < Wbini; iW++)
+                    {
+                        Double_t err_s = pow(h_CSt->GetBinError(iW+1),2); //statistical
+                        h_CSt->SetBinError(iW+1, sqrt(err_s));
+                        CSvalue[iMod][iW] = h_CSt->GetBinContent(iW+1);
+                        CSerror[iMod][iW] = h_CSt->GetBinError(iW+1);
+                    }
+                }
+                if(iMod==iDATA || iMod==iGEN || (iMod==iOPGn && bMultiPion==false))
+                    {
+                        hs_CSt->Add(h_CSt);
+                    }
+            }
+            if(iCharge==0)
+            {
+                sprintf(c_NAME,"cs_files/pip_q%d_t%d.csv",iQ2+1,iThPiQ+1);
+            }
+            else if(iCharge==1)
+            {
+                sprintf(c_NAME,"cs_files/pim_q%d_t%d.csv",iQ2+1,iThPiQ+1);
+            }
+            ofstream CStxtFile (c_NAME);
+            if(CStxtFile.is_open())///For cross section values
+            {
+                for(Int_t iW = 0; iW < Wbini; iW++)
+                {
+                    Double_t Wvalue  = CS_Wmin + 0.025*(Double_t(iW)+1.);
+                    CStxtFile << Wvalue << "," << CSvalue[iDATA][iW] << "," << CSerror[iDATA][iW] << "," << CSvalue[iGEN][iW];
+                    CStxtFile << "," << CSerror[iGEN][iW] << "," << CSvalue[iOPGn][iW] << "," << CSerror[iOPGn][iW] << "\n";
+                }
+            }
+            CStxtFile.close();
+            hs_CSt->Draw("nostack,e1p");
+            hs_CSt->GetYaxis()->SetLabelSize(label_size);//0.05 or label_size
+            hs_CSt->SetMinimum(0.0);
+            hs_CSt->GetYaxis()->SetNdivisions(iNYdiv);
+            hs_CSt->GetXaxis()->SetNdivisions(iNXdiv);
+            hs_CSt->GetXaxis()->SetTitleOffset(1.5);
+            hs_CSt->GetXaxis()->SetLabelSize(xlab_size);
+            if(iQcanv==0)
+            {
+                hs_CSt->SetTitle("Theta_pi pi-   0.70 < Q2 < 1.0;;");
+            }
+            else if(iQcanv==1)
+            {
+                hs_CSt->SetTitle("pi-   1.0 < Q2 < 1.4;;");
+            }
+            else if(iQcanv==2)
+            {
+                hs_CSt->SetTitle("pi-   1.4 < Q2 < 1.9;;");
+            }
+            else if(iQcanv==3)
+            {
+                hs_CSt->SetTitle("pi-   1.9 < Q2 < 2.5;;");
+            }
+        }
+    }
+    c1->Print(fileName);
+  //Print page to file
+  c1->Clear();
+  }///End of cross sections
+  unc_pid_t.close(); unc_Vze_t.close(); unc_Vre_t.close(); unc_Vrpi_t.close(); unc_Vdiff_t.close(); ///close files
   //CStxtFile.close();
+                                ErrtxtFile.close();
 
   /// RC vs. chi2/NDF
   //Print final page to file and close pdf
@@ -4464,6 +6001,8 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   c1->Print(fileName+")");
   c1->Clear();
 
+if(bLoad==true)
+ {
   ///Write out histograms to file
   hs_W_data->Write("nostack");
   hs_W_resid_MC->Write();
@@ -4534,7 +6073,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   h2_Ppim_thetapimq_data->Write();
   h2_Ppip_thetapip_data->Write();
   h2_Ppim_thetapim_data->Write();
-
+ }
 
   gBenchmark->Stop("timer");
   gBenchmark->Print("timer");
@@ -4551,6 +6090,7 @@ for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// Calculating y_sum
   std::cout << "opgpn file events =  " << i_pisup+i_pipn << " = " << i_pitop << "\t Off by:  " << i_pitop-i_pisup-i_pipn << std::endl;
   std::cout << "opgmn file events =  " << i_pisun+i_pimn << " = " << i_piton << "\t Off by:  " << i_piton-i_pisun-i_pimn << std::endl;
   std::cout << "RadFitAve (pi+) =  " << RadFitAve[0] <<" +- "<<RadFitUnc[0]<<"\t (pi-) =  " << RadFitAve[1]  <<" +- "<<RadFitUnc[1]<< std::endl;
+  std::cout << "Schwinger =  " << RC_schwing/nRC_schwing <<" vs "<<RC_genie/nRC_genie<<" vs " << RC_wght/nRC_genie << std::endl;
   std::cout << "Sector uncer =  " << 100*sqrt(var_sum)/var_num <<"%"<< std::endl;
   //std::cout << "tpd events =  " << cs_tpdT   << ", " << cs_tpd2<< ", " << cs_tpd3<< ", " << counter_tpd << std::endl;
 }
@@ -4602,12 +6142,23 @@ Double_t ExpFunc(Double_t A, Double_t B, Double_t C, Double_t D, Double_t E, Dou
     return answer;
 }
 
+Double_t SchwingerEqnCalc(Double_t E, Double_t dE, Double_t q2, Double_t m, Double_t theta)
+{
+    Double_t pi      = 3.1415926536;
+    Double_t sin2    = (1.-cos(theta))/2.;
+    Double_t cos2    = (1.+sin(theta))/2.;///Note: q2 refers to Q2, so "log(q2/pow(m,2))" in below is "ln(-q2/m2)" in Mo-Tsai.
+    Double_t schwing = 1 - (( 2/(137*pi) )*( ((log(E/dE)-(13/12))*(log(q2/pow(m,2))-1))+(17/36)+(0.5*log(sin2)*log(cos2))-(0.5*sin2)+((1/8)*pow(sin2,2))-((1/18)*pow(sin2,3)) ));
+    //cout <<endl<< schwing<<" = 1-2/137pi*( "<<log(E/dE)-13/12<<"*"<<log(q2/pow(m,2))-1<<"+17/36+0.5("<<log(sin2)*log(cos2)<<"-";
+    //cout <<sin2<<"+"<<(1/4)*pow(sin2,2)<<"-"<<(1/9)*pow(sin2,3)<<"))"<<endl;
+    return schwing;
+}
+
 void EventBinner(bool QorNot, Int_t ichrg, Double_t P_pi, Double_t theta, Double_t q2_epi, Double_t W_epi, Double_t Wmin, Double_t DeltaW, Int_t Wbini,
                  Int_t &iPmom, Int_t &iThPiQ, Int_t &iQ2, Int_t &iW)
 {
     if(QorNot == true)//theta_piq
     {
-        Int_t iAllPnTheta = -1;//-1 or 4
+        Int_t iAllPnTheta = 4;//-1 or 4
         //Selecting pi momentum (P_pi) bin
         Double_t Pbin[2][5] = {{0.7,1.0,1.5,2.2,2.7},{0.7,1.0,1.5,2.2,2.7}};//{0.6,0.9,1.4,2.1,2.6}};
         if(P_pi < Pbin[ichrg][0]){iPmom = iAllPnTheta;}
@@ -4710,6 +6261,11 @@ void EventBinner(bool QorNot, Int_t ichrg, Double_t P_pi, Double_t theta, Double
             break;
     }
     if(iW < iWmin || iW >= iWmax) {iW = -1;}
+}
+
+Double_t BinVolCalc(bool PiQorPi, Int_t c, Int_t q, Int_t p, Int_t t, Int_t w)
+{
+
 }
 
 std::ifstream& GotoLine(std::ifstream& file, unsigned int num)
