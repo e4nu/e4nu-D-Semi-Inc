@@ -34,7 +34,7 @@ void EventBinner(bool QorNot, Int_t ichrg, Double_t P_pi, Double_t theta_piq, Do
 Int_t eCutter(Double_t VWcut, Double_t Lv, Double_t Lw, Double_t vz_e, Double_t vz_e_min, Double_t vz_e_max, Double_t Vperp_e, Double_t Vperp_ecut);
 Int_t PiCutter(Int_t iCharge, Double_t P_pi, Double_t p5, Double_t p10, Double_t Vperp_pi, Double_t Vdiff_pi,
               Double_t Vperp_pipcut[3], Double_t Vperp_pip_ms[3][2], Double_t Vperp_pimcut[2], Double_t Vperp_pim_ms[2][2], Double_t Nsig = 3);
-Double_t BinVolCalc(bool PiQorPi, Int_t c, Int_t q, Int_t p, Int_t t, Int_t w);
+Double_t BinVolCalc(bool PiQorPi, Int_t d, Int_t c, Double_t q, Int_t p, Int_t PMAX, Int_t t, Int_t TMAX, Double_t dw);
 std::ifstream& GotoLine(std::ifstream& file, unsigned int num);
 using namespace clas12;
 using namespace std;
@@ -64,7 +64,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
   //JLB
   TString path = "/work/clas12/cfogler/e4nu/skimmer/", path_MC = "/cache/clas12/rg-b/MC/e4nu/cfogler/", path_cut = "/volatile/clas12/cfogler/";
   chain_data.Add(path_MC+inFile_data); chain_MC.Add(path_MC+inFile_MC); chain_opg.Add(path_MC+inFile_opg); chain_opgm.Add(path_MC+inFile_opgm);
-  chain_opgn.Add(path_cut+inFile_opgn); chain_opgmn.Add(path_cut+inFile_opgmn); chain_MCrad.Add(inFile_tpd);
+  chain_opgn.Add(path_cut+inFile_opgn); chain_opgmn.Add(path_cut+inFile_opgmn); chain_MCrad.Add(path_MC+inFile_tpd);
   //JLB (create clas12reader with just tag 0 events)
   chain_data.SetReaderTags({0}); chain_MC.SetReaderTags({0}); chain_opg.SetReaderTags({0}); chain_opgm.SetReaderTags({0});
   chain_opgn.SetReaderTags({0}); chain_opgmn.SetReaderTags({0}); chain_MCrad.SetReaderTags({0});
@@ -869,7 +869,7 @@ void e4nu_radComparison_4p2GeV(TString inFile_data = "", TString inFile_MC = "",
             else{/// changed theta_piq to Theta_pi
                 EventBinner(bQorNot, iCharge, P_pi, Theta_pi, q2, W, CS_Wmin, dW, Wbini, iPmom, iThPiQ, iQ2, iW);
             }
-            if(iPmom == -1 || iThPiQ == -1 || iQ2 == -1 || iW == -1 || iCharge == -1) continue;
+            if(iQ2 == -1 || iW == -1 || iCharge == -1 || iPmom == -1 || iThPiQ == -1) continue;
             //if(iPmom == -1){iPmom = 4;}
             //if(iThPiQ == -1){iThPiQ = 4;}
             if(bMultiPion == true && pips.size() + pims.size() == 1) continue;
@@ -1026,6 +1026,7 @@ cout << "Above GENIE\n";
       vec_q.SetMagThetaPhi(v4_gen_q.P(),v4_gen_q.Theta(),v4_gen_q.Phi());
       vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
       theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();
+      Theta_pi *= TMath::RadToDeg();
 
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///MC_gen CS calculations
@@ -1043,7 +1044,7 @@ cout << "Above GENIE\n";
             y_sum[iPmom_gen][iThPiQ_gen][iCharge_gen][iGEN][iQ2_gen][iW_gen] += 1.;//sector is set to 0
             counter_gen++;
         }
-        Theta_pi = 0.0; Phi_pi = 0.0; //cout << iPmom_gen << iThPiQ_gen << iQ2_gen << iW_gen << "\t";
+        //Theta_pi = 0.0; Phi_pi = 0.0; cout << iPmom_gen << iThPiQ_gen << iQ2_gen << iW_gen << "\t";
 
       // get particles by type
       auto electrons=c12_MC->getByID(11);
@@ -1944,6 +1945,7 @@ cout << "Above GENIE\n";
       vec_q.SetMagThetaPhi(v4_gen_q.P(),v4_gen_q.Theta(),v4_gen_q.Phi());
       vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
       theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();
+      Theta_pi *= TMath::RadToDeg();
 
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///MC_gen CS calculations
@@ -2239,6 +2241,7 @@ cout << "Above GENIE\n";
       vec_q.SetMagThetaPhi(v4_gen_q.P(),v4_gen_q.Theta(),v4_gen_q.Phi());
       vec_pi.SetMagThetaPhi(P_pi,Theta_pi,Phi_pi);
       theta_piq = vec_q.Angle(vec_pi)*TMath::RadToDeg();
+      Theta_pi *= TMath::RadToDeg();
 
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///MC_gen CS calculations
@@ -3018,14 +3021,14 @@ if(bLoad==true)
                 TH1D * h_CSincP = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
                 {
-                    dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                    /*dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
                     Double_t dPmom = dP[iPcanv];
                     if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
                         dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
-                    }
-                    bin_vol = dPmom * dT * dQ2[iQ2] * dW;
+                    }*/
+                    bin_vol = BinVolCalc(bQorNot, 4, iCharge, dQ2[iQ2], iPcanv, Pbini, iThPiQ, TPIQi, dW);
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
                     sprintf(c_NAME,"hs_CS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                     THStack * hs_CS = new THStack(c_NAME,"");
@@ -3735,14 +3738,14 @@ if(bLoad==true)
               else{dPmom = 1.;}*/
               for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
               {
-                dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                /*dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
                 Double_t dPmom = dP[iPcanv];
                 if(bQorNot==false)
                 {
                     dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
                     dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
-                }
-                bin_vol = dPmom * dT * dQ2[iQ2] * dW;
+                }*/
+                bin_vol = BinVolCalc(bQorNot, 4, iCharge, dQ2[iQ2], iPcanv, Pbini, iThPiQ, TPIQi, dW);
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
                 sprintf(c_NAME,"hs_CSS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                 THStack * hs_CSS = new THStack(c_NAME,"");
@@ -3827,6 +3830,7 @@ if(bLoad==true)
                     }
                 //}
               }
+              bin_vol = BinVolCalc(bQorNot, 1, iCharge, dQ2[iQ2], iPcanv, Pbini, -1, TPIQi, dW);
               for(Int_t iSector = 0; iSector < sectors; iSector++)
               {
                 sprintf(c_NAME,"h_CSSp%d%d%d%d",iPcanv,iCharge,iSector,iQ2);
@@ -3866,6 +3870,7 @@ if(bLoad==true)
             ///Calculate 3D Theta_piq CSS
             for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
             {
+              bin_vol = BinVolCalc(bQorNot, 3, iCharge, dQ2[iQ2], -1, Pbini, iThPiQ, TPIQi, dW);
               for(Int_t iSector = 0; iSector < sectors; iSector++)
               {
                 sprintf(c_NAME,"h_CSSt%d%d%d%d",iThPiQ,iCharge,iSector,iQ2);
@@ -3896,6 +3901,7 @@ if(bLoad==true)
               }
             }
             ///Calculate 2D Q2 AC
+            bin_vol = BinVolCalc(bQorNot, 2, iCharge, dQ2[iQ2], -1, Pbini, -1, TPIQi, dW);
             for(Int_t iSector = 0; iSector < sectors; iSector++)
             {
             sprintf(c_NAME,"h_CSSq%d%d%d",iCharge,iSector,iQ2);
@@ -3968,14 +3974,14 @@ if(bLoad==true)
                 TH1D * h_CSnoradP = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
                 {
-                    dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                    /*dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
                     Double_t dPmom = dP[iPcanv];
                     if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
                         dPmom = dPt[iCharge][iPcanv] - dPt[iCharge][iPcanv-1];
-                    }
-                    bin_vol = dPmom * dT * dQ2[iQ2] * dW;
+                    }*/
+                    bin_vol = BinVolCalc(bQorNot, 4, iCharge, dQ2[iQ2], iPcanv, Pbini, iThPiQ, TPIQi, dW);
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
                     //gPad->SetLogy();
                     sprintf(c_NAME,"h_CSopgpr%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
@@ -4507,16 +4513,16 @@ if(bLoad==true)
                 Int_t iPcanv = (Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
                 for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)
                 {
-                    dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
-                    Double_t dPmom = dP[iPcanv];
+                    //dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                    //Double_t dPmom = dP[iPcanv];
                     Double_t CSvalue[models][Wbini];
                     Double_t CSerror[models][Wbini];
-                    if(bQorNot==false)
+                    /*if(bQorNot==false)
                     {
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
                         dPmom = dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv];
-                    }
-                    bin_vol = dPmom * dT * dQ2[iQ2] * dW;
+                    }*/
+                    bin_vol = BinVolCalc(bQorNot, 4, iCharge, dQ2[iQ2], iPcanv, Pbini, iThPiQ, TPIQi, dW);//dPmom * dT * dQ2[iQ2] * dW;
                     c1->cd(canvas); canvas++; //Needed to get plot positions correct
                     sprintf(c_NAME,"hs_CS%d%d%d%d",iPcanv,iThPiQ,iCharge,iQ2);
                     THStack * hs_CS = new THStack(c_NAME,"");
@@ -4861,13 +4867,14 @@ if(bLoad==true)
             sprintf(c_NAME,"hs_CSq%d%d",iCharge,iQcanv);
             THStack * hs_CSq = new THStack(c_NAME,"");
             //gPad->SetLogy();
+            bin_vol = BinVolCalc(bQorNot, 2, iCharge, dQ2[iQcanv], -1, Pbini, -1, TPIQi, dW);
             for(Int_t iMod = 0; iMod < models; iMod++)
             {
                 //if(iMod==iGENIE) continue;
                 sprintf(c_NAME,"h_CSq%d%d%d",iCharge,iQcanv,iMod);
                 TH1D * h_CSq = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 h_CSq->Sumw2(); //https://root-forum.cern.ch/t/array-of-histograms/13148/2
-                Double_t dPT_Q2 = 0.;
+                //Double_t dPT_Q2 = 0.; bin_vol = 0.;
                 for(Int_t iW = 0; iW < Wbini; iW++)
                 {
                     Double_t bin_content = 0., bin_err = 0.;
@@ -4880,7 +4887,7 @@ if(bLoad==true)
                     for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)//Removed +1 from Pbini+1
                     {
                         Int_t iPcanv = iPmom;//(Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
-                        dPT_Q2 += dP[iPcanv] * DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
+                        /*dPT_Q2 += dP[iPcanv] * DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
                         if(bQorNot==false)
                         {
                           if(iCharge==0 && iPcanv < 3)
@@ -4897,7 +4904,7 @@ if(bLoad==true)
                             dPT_Q2 += (dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv])*DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][2]);
                           else
                             dPT_Q2 = 1.;
-                        }
+                        }*/
                         for(Int_t iThPiQ = 0; iThPiQ < TPIQi; iThPiQ++)//Removed +1 from TPIQi+1
                         {
                             if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
@@ -4936,7 +4943,7 @@ if(bLoad==true)
                         h_CSq->SetBinError(iW+1, sqrt(bin_content));
                     }
                 }   // Note: for an array bin # of iW, the ROOT bin # is iW+1
-                bin_vol = dPT_Q2 * dQ2[iQcanv] * dW;
+                //bin_vol = dPT_Q2 * dQ2[iQcanv] * dW;
                 //if (h_CS->GetSumw2N() == 0) h_CS->Sumw2(kTRUE);
                 if(iMod==iDATA)//Data
                 {
@@ -5166,11 +5173,11 @@ if(bLoad==true)
             for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)
             {
                 Int_t iPcanv = iPmom;//(Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
-                Double_t dPmom = dP[iPcanv];
-                dT = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
+                //Double_t dPmom = dP[iPcanv];
+                //dT = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TPIQi-iPcanv]);
                 Double_t CSvalue[models][Wbini];
                 Double_t CSerror[models][Wbini];
-                if(bQorNot==false)
+                /*if(bQorNot==false)
                 {
                     dPmom = dPt[iCharge][iPcanv+1] - dPt[iCharge][iPcanv];
                     if(iCharge==0 && iPcanv < 3)
@@ -5187,8 +5194,8 @@ if(bLoad==true)
                         dT = DeltaThetaPiQBin(ThetaPi[iCharge][0],ThetaPi[iCharge][2]);
                     else
                         dT = 1.;
-                }
-                bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
+                }*/
+                bin_vol = BinVolCalc(bQorNot, 1, iCharge, dQ2[iQcanv], iPcanv, Pbini, -1, TPIQi, dW);//dPmom * dT * dQ2[iQcanv] * dW;
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
                 sprintf(c_NAME,"hs_CSp%d%d%d",iPcanv,iCharge,iQcanv);
                 THStack * hs_CSp = new THStack(c_NAME,"");
@@ -5466,6 +5473,7 @@ if(bLoad==true)
     //label_size = 0.11;//0.06 0.09
     for(Int_t iCharge = 0; iCharge < Nrec; iCharge++)/// cross sections
     {
+        if(bQorNot==false && iCharge==1) continue;
         Double_t b2b_error = sqrt(pow(u_eID,2)+pow(u_hID,2)+pow(u_Vze,2)+pow(u_Vre,2)+pow(u_Vrpi,2)+pow(u_Vdiff,2)+pow(u_TW,2));
         canvas = 1;
         for(Int_t iQ2 = 0; iQ2 < Q2bini; iQ2++)
@@ -5475,7 +5483,7 @@ if(bLoad==true)
             {
                 Double_t CSvalue[models][Wbini];
                 Double_t CSerror[models][Wbini];
-                dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
+                /*dT = DeltaThetaPiQBin(ThetaPiQ[iThPiQ],ThetaPiQ[iThPiQ+1]);
                 Double_t dPmom = 0.;
                 if(Pbini-iThPiQ>0)
                 {
@@ -5502,8 +5510,8 @@ if(bLoad==true)
                         dPmom = dPt[iCharge][2] - dPt[iCharge][0];
                     else
                         dPmom = 1.;
-                }
-                bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
+                }*/
+                bin_vol = BinVolCalc(bQorNot, 3, iCharge, dQ2[iQcanv], -1, Pbini, iThPiQ, TPIQi, dW);//dPmom * dT * dQ2[iQcanv] * dW;
                 c1->cd(canvas); canvas++; //Needed to get plot positions correct
                 sprintf(c_NAME,"hs_CSt%d%d%d",iThPiQ,iCharge,iQcanv);
                 THStack * hs_CSt = new THStack(c_NAME,"");
@@ -5774,7 +5782,7 @@ if(bLoad==true)
         {
             Double_t CSvalue[models][Wbini];
             Double_t CSerror[models][Wbini];
-            Double_t dPmom = 0.;
+            /*Double_t dPmom = 0.;
             dT = DeltaThetaPiQBin(ThetaPi[iCharge][iThPiQ],ThetaPi[iCharge][iThPiQ+1]);
             if(iThPiQ==0)
                 dPmom = dPt[iCharge][4] - dPt[iCharge][2];
@@ -5785,16 +5793,16 @@ if(bLoad==true)
             else if(iThPiQ==3)
                 dPmom = dPt[iCharge][2] - dPt[iCharge][0];
             else
-                dPmom = dPt[iCharge][1] - dPt[iCharge][0];
-            bin_vol = dPmom * dT * dQ2[iQcanv] * dW;
+                dPmom = dPt[iCharge][1] - dPt[iCharge][0];*/
+            bin_vol = BinVolCalc(bQorNot, 3, 1, dQ2[iQcanv], -1, Pbini, iThPiQ, TPIQi, dW);
             c1->cd(canvas); canvas++; //Needed to get plot positions correct
-            sprintf(c_NAME,"hs_CSt%d%d%d",iThPiQ,iCharge,iQcanv);
+            sprintf(c_NAME,"hs_CSt%d%d%d",iThPiQ,1,iQcanv);
             THStack * hs_CSt = new THStack(c_NAME,"");
             //gPad->SetLogy();
             for(Int_t iMod = 0; iMod < models; iMod++)
             {
                 //if(iMod==iGENIE) continue;
-                sprintf(c_NAME,"h_CSt%d%d%d%d",iThPiQ,iCharge,iQcanv,iMod);
+                sprintf(c_NAME,"h_CSt%d%d%d%d",iThPiQ,1,iQcanv,iMod);
                 TH1D * h_CSt = new TH1D(c_NAME,"",Wbini,CS_Wmin,CS_Wmax);
                 h_CSt->Sumw2(); //https://root-forum.cern.ch/t/array-of-histograms/13148/2
                 for(Int_t iW = 0; iW < Wbini; iW++)
@@ -5802,8 +5810,8 @@ if(bLoad==true)
                     Double_t bin_content = 0., bin_err = 0.;
                     CSvalue[iMod][iW] = 0.;
                     CSerror[iMod][iW] = 0.;
-                    Double_t ACorr = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
-                    Double_t RCorr = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinContent(iW+1);
+                    Double_t ACorr = hr_ACt[iThPiQ][1][iQcanv]->GetBinContent(iW+1);
+                    Double_t RCorr = hr_RCt[iThPiQ][1][iQcanv]->GetBinContent(iW+1);
                     if(bAC == false){ACorr=1.;}
                     if(bRAD == false){RCorr=1.;}
                     for(Int_t iPmom = 0; iPmom < Pbini; iPmom++)// removed +1
@@ -5812,27 +5820,27 @@ if(bLoad==true)
                         if(iThPiQ==0 && iPmom==0) continue;
                         else if(iThPiQ==TPIQi && iPmom==0)
                         {
-                            if(iMod<iGENIEr && y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
+                            if(iMod<iGENIEr && y_sum[iPcanv][0][1][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                bin_err += tCS[iPcanv][0][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW]);
-                                bin_content += tCS[iPcanv][0][iCharge][iMod][iQcanv][iW];
+                                bin_err += tCS[iPcanv][0][1][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][0][1][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][0][1][iMod][iQcanv][iW];
                             }
                             else if(iMod>=iGENIEr && ACorr<ACyMax)
                             {
-                                bin_content += y_sum[iPcanv][0][iCharge][iMod][iQcanv][iW];
+                                bin_content += y_sum[iPcanv][0][1][iMod][iQcanv][iW];
                             }
                         }
                         else if(iThPiQ==TPIQi && iPmom!=0) continue;
                         else
                         {
-                            if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
+                            if(iMod<iGENIEr && y_sum[iPcanv][iThPiQ][1][iMod][iQcanv][iW]!=0)///Scale h_CS bins by total CS for onepigen
                             {
-                                bin_err += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW]);
-                                bin_content += tCS[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
+                                bin_err += tCS[iPcanv][iThPiQ][1][iMod][iQcanv][iW]/sqrt(y_sum[iPcanv][iThPiQ][1][iMod][iQcanv][iW]);
+                                bin_content += tCS[iPcanv][iThPiQ][1][iMod][iQcanv][iW];
                             }
                             else if(iMod>=iGENIEr && ACorr<ACyMax)
                             {
-                                bin_content += y_sum[iPcanv][iThPiQ][iCharge][iMod][iQcanv][iW];
+                                bin_content += y_sum[iPcanv][iThPiQ][1][iMod][iQcanv][iW];
                             }
                         }
                     }
@@ -5862,7 +5870,7 @@ if(bLoad==true)
                     h_CSt->Scale(totalCS_MC[iGENmod] * ub2nb / (MC_evts[iGENmod] * bin_vol));//kRed
                     line = 1; mark = 32; size = 5; marc = 2; h_CSt->SetLineColor(2);
                 }
-                else if(iMod==iOPGn && iCharge==1)//onepigen pi- norad
+                else if(iMod==iOPGn)//onepigen pi- norad
                 {
                     h_CSt->Scale(ub2nb * SecCorr / (opg_gen_events[3] * bin_vol));/// <-------------------<<
                     line = 1; mark = 26; size = 4; marc = 4; h_CSt->SetLineColor(4);//38);
@@ -5906,9 +5914,9 @@ if(bLoad==true)
                             Double_t CSscale = 1.;//cm2ub * ub2nb * SecCorr / (L * bin_vol);
                             Double_t err_s = pow(h_CSt->GetBinError(iW+1),2);       //statistical
                             Double_t error = err_s;                                 //statistical
-                            error += varT[iThPiQ][iCharge][iQcanv][iW];  //sector-by-sector uncertainty
-                            Double_t radunc = hr_RCt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
-                            Double_t accunc = hr_ACt[iThPiQ][iCharge][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
+                            error += varT[iThPiQ][1][iQcanv][iW];  //sector-by-sector uncertainty
+                            Double_t radunc = hr_RCt[iThPiQ][1][iQcanv]->GetBinError(iW+1);///radiative correction uncertainty (GENIE)
+                            Double_t accunc = hr_ACt[iThPiQ][1][iQcanv]->GetBinError(iW+1);///acceptance correction uncertainty (GENIE)
                             error += pow(radunc * h_CSt->GetBinContent(iW+1),2); ///radiative correction uncertainty (GENIE)
                             error += pow(accunc * h_CSt->GetBinContent(iW+1),2); ///acceptance correction uncertainty (GENIE)
                             error += pow(u_eID * h_CSt->GetBinContent(iW+1),2); //eID uncertainty
@@ -5939,14 +5947,7 @@ if(bLoad==true)
                         hs_CSt->Add(h_CSt);
                     }
             }
-            if(iCharge==0)
-            {
-                sprintf(c_NAME,"cs_files/pip_q%d_t%d.csv",iQ2+1,iThPiQ+1);
-            }
-            else if(iCharge==1)
-            {
-                sprintf(c_NAME,"cs_files/pim_q%d_t%d.csv",iQ2+1,iThPiQ+1);
-            }
+            sprintf(c_NAME,"cs_files/pim_q%d_t%d.csv",iQ2+1,iThPiQ+1);
             ofstream CStxtFile (c_NAME);
             if(CStxtFile.is_open())///For cross section values
             {
@@ -6263,9 +6264,127 @@ void EventBinner(bool QorNot, Int_t ichrg, Double_t P_pi, Double_t theta, Double
     if(iW < iWmin || iW >= iWmax) {iW = -1;}
 }
 
-Double_t BinVolCalc(bool PiQorPi, Int_t c, Int_t q, Int_t p, Int_t t, Int_t w)
+Double_t BinVolCalc(bool PiQorPi, Int_t id, Int_t ic, Double_t dq, Int_t ip, Int_t PMAX, Int_t it, Int_t TMAX, Double_t dw)
 {
-
+	/// W and Q2 bin values
+	Double_t dP[4] = {0.3, 0.5, 0.7, 0.5};
+	/// Theta_PiQ bin values
+	Double_t ThetaPiQ[5] = {0.0, 12.0, 22.0, 32.0, 46.0};//{0.0, 20., 30.0, 40.0, 60.0};
+	Double_t ThetaPi[2][6] = {{7., 13., 19., 25., 31.,32.},{15.,20.,26.,32.,40.,45.}};
+	Double_t dPt[2][5] = {{0.75,1.1,1.5,2.2,2.7},{0.6,0.9,1.5,1.9,2.4}};
+    Double_t dPmom = 0., dTheta = 0., dPT = 0.;
+    if(PiQorPi==true)//theta_piq
+    {
+        if(id==4)//4D
+        {
+            dTheta = DeltaThetaPiQBin(ThetaPiQ[it],ThetaPiQ[it+1]);
+            dPmom  = dP[ip];
+            dPT    = dPmom * dTheta;
+        }
+        else if(id==2)//2D Q^2
+        {
+          for(Int_t ip_q2 = 0; ip_q2<PMAX; ip_q2++)
+          {
+            dPmom  = dP[ip_q2];//(Pbini - 1) - iPmom;//Needed to get plot positions correct for P_pi
+            dTheta = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TMAX-ip_q2]);
+            dPT   += dPmom * dTheta;
+          }
+        }
+        else if(id==1)//3D P_pi
+        {
+            dPmom  = dP[ip];
+            dTheta = DeltaThetaPiQBin(ThetaPiQ[0],ThetaPiQ[TMAX-ip]);
+            dPT    = dPmom * dTheta;
+        }
+        else if(id==3)//3D Theta_piq
+        {
+            dTheta = DeltaThetaPiQBin(ThetaPiQ[it],ThetaPiQ[it+1]);
+            if(PMAX-it>0)
+            {
+                for(Int_t iPmoth = 0; iPmoth < PMAX-it; iPmoth++)
+                {
+                    dPmom += dP[iPmoth];
+                }
+            }
+            else{dPmom = 1.; cout<<"ERROR: INVALID P_PI VALUE GIVEN ["<<PiQorPi<<"] "<<id<<ic<<dq<<"_"<<ip<<"_"<<it<<dw<<endl;}
+            dPT    = dPmom * dTheta;
+        }
+        else{cout<<"ERROR: INVALID PLOT DIMENSION VALUE GIVEN ["<<PiQorPi<<"] "<<id<<"_"<<ic<<dq<<ip<<it<<dw<<endl;}
+    }
+    else if(PiQorPi==false)
+    {
+        if(id==4)//4D
+        {
+            dTheta = DeltaThetaPiQBin(ThetaPi[ic][it],ThetaPi[ic][it+1]);
+            dPmom  = dPt[ic][ip+1] - dPt[ic][ip];
+            dPT    = dPmom * dTheta;
+        }
+        else if(id==2)//2D Q^2
+        {
+          for(Int_t ip_q2 = 0; ip_q2<PMAX; ip_q2++)
+          {
+            dPmom = dPt[ic][ip_q2+1] - dPt[ic][ip_q2];
+            if(ic==0 && ip_q2 < 3)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][TMAX-1]);
+            else if(ic==0)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][TMAX-2]);
+            else if(ic==1 && ip_q2==0)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][2],ThetaPi[ic][5]);
+            else if(ic==1 && ip_q2==1)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][1],ThetaPi[ic][4]);
+            else if(ic==1 && ip_q2==2)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][3]);
+            else if(ic==1 && ip_q2==3)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][2]);
+            else
+                {dTheta = 1.; cout<<"ERROR: INVALID THETA VALUE GIVEN ["<<PiQorPi<<"] "<<id<<ic<<dq<<ip<<"_"<<it<<"_"<<dw<<endl;}
+            dPT   += dPmom * dTheta;
+          }
+        }
+        else if(id==1)//3D P_pi
+        {
+            dPmom = dPt[ic][ip+1] - dPt[ic][ip];
+            if(ic==0 && ip < 3)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][TMAX-1]);
+            else if(ic==0)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][TMAX-2]);
+            else if(ic==1 && ip==0)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][2],ThetaPi[ic][5]);
+            else if(ic==1 && ip==1)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][1],ThetaPi[ic][4]);
+            else if(ic==1 && ip==2)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][3]);
+            else if(ic==1 && ip==3)
+                dTheta = DeltaThetaPiQBin(ThetaPi[ic][0],ThetaPi[ic][2]);
+            else
+                {dTheta = 1.; cout<<"ERROR: INVALID THETA VALUE GIVEN ["<<PiQorPi<<"] "<<id<<ic<<dq<<ip<<"_"<<it<<"_"<<dw<<endl;}
+            dPT    = dPmom * dTheta;
+        }
+        else if(id==3)//3D Theta_pi
+        {
+            dTheta = DeltaThetaPiQBin(ThetaPi[ic][it],ThetaPi[ic][it+1]);
+            if(ic==0 && it < 3)
+                dPmom = dPt[ic][PMAX-1] - dPt[ic][0];
+            else if(ic==0)
+                dPmom = dPt[ic][PMAX-2] - dPt[ic][0];
+            else if(ic==1 && it==0)
+                dPmom = dPt[ic][4] - dPt[ic][2];
+            else if(ic==1 && it==1)
+                dPmom = dPt[ic][4] - dPt[ic][1];
+            else if(ic==1 && it==2)
+                dPmom = dPt[ic][3] - dPt[ic][0];
+            else if(ic==1 && it==3)
+                dPmom = dPt[ic][2] - dPt[ic][0];
+            else if(ic==1 && it==4)
+                dPmom = dPt[ic][1] - dPt[ic][0];
+            else
+                {dPmom = 1.; cout<<"ERROR: INVALID P_PI VALUE GIVEN ["<<PiQorPi<<"] "<<id<<ic<<dq<<"_"<<ip<<"_"<<it<<dw<<endl;}
+            dPT    = dPmom * dTheta;
+        }
+        else{cout<<"ERROR: INVALID PLOT DIMENSION VALUE GIVEN ["<<PiQorPi<<"] "<<id<<"_"<<ic<<dq<<ip<<it<<dw<<endl;}
+    }
+    Double_t bin_vol = dPT * dq * dw;
+    return bin_vol;
 }
 
 std::ifstream& GotoLine(std::ifstream& file, unsigned int num)
